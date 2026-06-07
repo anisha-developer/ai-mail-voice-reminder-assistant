@@ -1,0 +1,280 @@
+from __future__ import annotations
+
+import json
+from datetime import date, datetime, time, timezone
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+
+from app.database.session import SessionLocal
+from app.main import app
+from app.models.email_message import EmailMessage
+from app.models.email_summary import EmailSummary
+from app.models.email_reply_action import EmailReplyAction
+from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.user import User
+from app.models.voice_call_interaction import VoiceCallInteraction
+from app.models.voice_reply_session import VoiceReplySession
+from app.services import voice_call_service
+
+
+client = TestClient(app)
+
+
+def _login_token() -> str:
+    response = client.post(
+        "/auth/login",
+        json={"email": "browsertest@example.com", "password": "Test@12345"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def _create_voice_test_call() -> tuple[int, list[int], list[int]]:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "browsertest@example.com").first()
+        assert user is not None
+
+        message_ids: list[int] = []
+        summary_ids: list[int] = []
+        for index in range(1, 4):
+            message = EmailMessage(
+                user_id=user.id,
+                gmail_message_id=f"phase9-test-{uuid4()}",
+                gmail_thread_id=None,
+                sender=f"sender{index}@example.com",
+                recipient=user.email,
+                subject=f"Phase 9 Test Email {index}",
+                snippet=f"Snippet {index}",
+                plain_body=f"Body {index}",
+                html_body=None,
+                received_at=datetime.now(timezone.utc),
+                has_attachments=False,
+                attachment_metadata=None,
+                is_read_from_gmail=True,
+                is_summarized=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(message)
+            db.flush()
+            message_ids.append(message.id)
+            summary = EmailSummary(
+                user_id=user.id,
+                email_message_id=message.id,
+                sender=message.sender,
+                subject=message.subject,
+                short_summary=f"Short summary {index}",
+                detailed_summary=f"Detailed summary {index}",
+                action_required_text=None,
+                attachment_note=None,
+                summary_status="completed",
+                error_message=None,
+                is_delivered_in_mail_call=False,
+                delivered_at=None,
+                mail_call_log_id=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(summary)
+            db.flush()
+            summary_ids.append(summary.id)
+
+        call_log = MailSummaryCallLog(
+            user_id=user.id,
+            call_type="mail_summary",
+            call_status="prepared",
+            call_date=date.today(),
+            call_time=time(9, 0),
+            summary_count=len(summary_ids),
+            script_text="Test script",
+            delivery_status="pending",
+            delivered_summary_ids=json.dumps(summary_ids),
+            failure_reason=None,
+            provider="twilio",
+            provider_call_id="CA-test-phase9",
+            to_phone_number=user.phone_number,
+            from_phone_number="+17154196839",
+            call_started_at=None,
+            call_completed_at=None,
+            call_duration_seconds=None,
+            provider_status="in-progress",
+            provider_error_message=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(call_log)
+        db.commit()
+        db.refresh(call_log)
+        return call_log.id, summary_ids, message_ids
+    finally:
+        db.close()
+
+
+def _cleanup_voice_test_call(call_log_id: int, summary_ids: list[int], message_ids: list[int]) -> None:
+    db = SessionLocal()
+    try:
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(EmailReplyAction).filter(EmailReplyAction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(VoiceReplySession).filter(VoiceReplySession.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
+        db.query(EmailSummary).filter(EmailSummary.id.in_(summary_ids)).delete(synchronize_session=False)
+        db.query(EmailMessage).filter(EmailMessage.id.in_(message_ids)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_twilio_speech_webhook_handles_phase9_intents() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        detail_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Tell me more about the first email", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+        )
+        assert detail_response.status_code == 200
+        assert "Gather" in detail_response.text
+        assert "Do you want another email explained" in detail_response.text
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        first_payload = interactions.json()
+        assert first_payload[0]["detected_intent"] == "DETAIL_EMAIL"
+        assert first_payload[0]["email_reference"] == 1
+
+        help_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "What can I say?", "Confidence": "0.95", "CallSid": "CA-test-phase9"},
+        )
+        assert help_response.status_code == 200
+        assert "Gather" in help_response.text
+
+        repeat_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Repeat that", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+        )
+        assert repeat_response.status_code == 200
+        assert "Gather" in repeat_response.text
+
+        know_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "I want to know more", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+        )
+        assert know_response.status_code == 200
+        assert "Sorry, I did not understand" in know_response.text or "Gather" in know_response.text
+
+        end_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "no", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+        )
+        assert end_response.status_code == 200
+        assert "Ending the call" in end_response.text or "ending the call" in end_response.text.lower()
+        assert "hangup" in end_response.text.lower()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert len(payload) >= 4
+        assert any(item["detected_intent"] == "DETAIL_EMAIL" for item in payload)
+        assert any(item["detected_intent"] == "HELP" for item in payload)
+        assert any(item["detected_intent"] == "REPEAT_SUMMARY" for item in payload)
+        assert any(item["detected_intent"] == "END_CALL" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_speech_webhook_handles_phase10_lookup_phrases() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        sender_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Read the email from Google", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert sender_response.status_code == 200
+        assert "Gather" in sender_response.text
+
+        subject_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Tell me about the Kaggle notebook email", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert subject_response.status_code == 200
+        assert "Gather" in subject_response.text
+
+        latest_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Explain the latest email", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert latest_response.status_code == 200
+        assert "Gather" in latest_response.text
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert len(payload) >= 3
+        assert any(item["detected_intent"] == "DETAIL_EMAIL" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_speech_webhook_handles_phase11_reply_flow(monkeypatch) -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        monkeypatch.setattr(voice_call_service, "send_reply", lambda *args, **kwargs: {"provider_message_id": "msg-123"})
+
+        start_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "reply to email number one", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert start_response.status_code == 200
+        assert "What would you like me to say?" in start_response.text
+
+        db = SessionLocal()
+        try:
+            session = db.query(VoiceReplySession).filter(VoiceReplySession.mail_call_log_id == call_log_id).first()
+            assert session is not None
+            assert session.status == "awaiting_body"
+        finally:
+            db.close()
+
+        body_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "tell them I will join the meeting", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert body_response.status_code == 200
+        assert "Should I send this reply?" in body_response.text
+
+        confirm_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "yes send it", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert confirm_response.status_code == 200
+        assert "hangup" in confirm_response.text.lower()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "START_EMAIL_REPLY" for item in payload)
+        assert any(item["detected_intent"] == "CAPTURE_REPLY_BODY" for item in payload)
+        assert any(item["detected_intent"] == "CONFIRM_SEND_REPLY" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
