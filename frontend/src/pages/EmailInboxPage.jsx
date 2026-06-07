@@ -6,27 +6,27 @@ function EmailDetailModal({ email, onClose }) {
   if (!email) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-slate-950 p-6 text-white">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6 text-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Email Details</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Email Details</p>
             <h3 className="mt-2 text-2xl font-semibold">{email.subject || "(No subject)"}</h3>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-white/10 px-3 py-2 text-sm">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
             Close
           </button>
         </div>
-        <div className="mt-6 space-y-3 text-sm text-slate-300">
-          <p><span className="text-slate-500">From:</span> {email.sender || "-"}</p>
-          <p><span className="text-slate-500">To:</span> {email.recipient || "-"}</p>
-          <p><span className="text-slate-500">Received:</span> {email.received_at ? new Date(email.received_at).toLocaleString() : "-"}</p>
-          <p><span className="text-slate-500">Snippet:</span> {email.snippet || "-"}</p>
-          <p><span className="text-slate-500">Plain body:</span></p>
-          <pre className="whitespace-pre-wrap rounded-2xl bg-white/5 p-4 text-sm">{email.plain_body || "-"}</pre>
-          <p><span className="text-slate-500">HTML body:</span></p>
-          <pre className="whitespace-pre-wrap rounded-2xl bg-white/5 p-4 text-sm">{email.html_body || "-"}</pre>
-          <p><span className="text-slate-500">Attachments:</span></p>
-          <pre className="whitespace-pre-wrap rounded-2xl bg-white/5 p-4 text-sm">
+        <div className="mt-6 space-y-3 text-sm text-slate-600">
+          <p><span className="text-slate-400">From:</span> {email.sender || "-"}</p>
+          <p><span className="text-slate-400">To:</span> {email.recipient || "-"}</p>
+          <p><span className="text-slate-400">Received:</span> {email.received_at ? new Date(email.received_at).toLocaleString() : "-"}</p>
+          <p><span className="text-slate-400">Snippet:</span> {email.snippet || "-"}</p>
+          <p><span className="text-slate-400">Plain body:</span></p>
+          <pre className="whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm">{email.plain_body || "-"}</pre>
+          <p><span className="text-slate-400">HTML body:</span></p>
+          <pre className="whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm">{email.html_body || "-"}</pre>
+          <p><span className="text-slate-400">Attachments:</span></p>
+          <pre className="whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm">
             {JSON.stringify(email.attachment_metadata || [], null, 2)}
           </pre>
         </div>
@@ -39,22 +39,22 @@ function SummaryModal({ summary, onClose }) {
   if (!summary) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-slate-950 p-6 text-white">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6 text-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Email Summary</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Email Summary</p>
             <h3 className="mt-2 text-2xl font-semibold">{summary.subject || "(No subject)"}</h3>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-white/10 px-3 py-2 text-sm">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
             Close
           </button>
         </div>
-        <div className="mt-6 space-y-3 text-sm text-slate-300">
-          <p><span className="text-slate-500">From:</span> {summary.sender || "-"}</p>
-          <p><span className="text-slate-500">Short summary:</span> {summary.short_summary || "-"}</p>
-          <p><span className="text-slate-500">Action required:</span> {summary.action_required_text || "-"}</p>
-          <p><span className="text-slate-500">Attachment note:</span> {summary.attachment_note || "-"}</p>
-          <pre className="whitespace-pre-wrap rounded-2xl bg-white/5 p-4 text-sm">{summary.detailed_summary || "-"}</pre>
+        <div className="mt-6 space-y-3 text-sm text-slate-600">
+          <p><span className="text-slate-400">From:</span> {summary.sender || "-"}</p>
+          <p><span className="text-slate-400">Short summary:</span> {summary.short_summary || "-"}</p>
+          <p><span className="text-slate-400">Action required:</span> {summary.action_required_text || "-"}</p>
+          <p><span className="text-slate-400">Attachment note:</span> {summary.attachment_note || "-"}</p>
+          <pre className="whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm">{summary.detailed_summary || "-"}</pre>
         </div>
       </div>
     </div>
@@ -161,17 +161,17 @@ export default function EmailInboxPage() {
       title="Email Inbox"
       description="Sync and browse stored Gmail inbox messages."
     >
-      <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 text-slate-200 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm text-slate-400">Gmail connection</p>
-          <p className="text-lg font-semibold text-white">{syncStatus.gmail_connected ? "Connected" : "Disconnected"}</p>
+          <p className="text-lg font-semibold text-slate-900">{syncStatus.gmail_connected ? "Connected" : "Disconnected"}</p>
           <p className="text-sm text-slate-400">Stored emails: {syncStatus.total_emails_stored}</p>
         </div>
         <button
           type="button"
           onClick={handleSync}
           disabled={loading || !syncStatus.gmail_connected}
-          className="rounded-xl bg-sky-400 px-4 py-3 font-semibold text-slate-950 disabled:opacity-60"
+          className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white disabled:opacity-60"
         >
           {loading ? "Syncing..." : "Sync Emails"}
         </button>
@@ -192,7 +192,7 @@ export default function EmailInboxPage() {
         />
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-sm text-slate-300">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
         <p>Auto sync status: {autoSyncStatus.last_auto_sync_status || "-"}</p>
         <p>Auto summary status: {autoSyncStatus.last_auto_summary_status || "-"}</p>
         <p>Auto summary success count: {autoSyncStatus.last_auto_summary_success_count}</p>
@@ -203,21 +203,21 @@ export default function EmailInboxPage() {
         <p>Last auto summary error: {autoSyncStatus.last_auto_summary_error || "-"}</p>
       </div>
 
-      {syncResult ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-emerald-200">{syncResult}</div> : null}
-      {error ? <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-200">{error}</div> : null}
+      {syncResult ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{syncResult}</div> : null}
+      {error ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{error}</div> : null}
 
       <div className="space-y-3">
         {emails.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-slate-400">No emails stored yet.</div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-400">No emails stored yet.</div>
         ) : (
           emails.map((email) => (
-            <div key={email.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div key={email.id} className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-white">{email.subject || "(No subject)"}</h3>
-                  <p className="text-sm text-slate-300">{email.sender || "-"}</p>
+                  <h3 className="text-lg font-semibold text-slate-900">{email.subject || "(No subject)"}</h3>
+                  <p className="text-sm text-slate-600">{email.sender || "-"}</p>
                   <p className="mt-2 text-sm text-slate-400">{email.snippet || "-"}</p>
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-xs text-slate-400">
                     {email.received_at ? new Date(email.received_at).toLocaleString() : "Unknown date"}
                     {email.has_attachments ? " • Attachments" : ""}
                   </p>
@@ -227,7 +227,7 @@ export default function EmailInboxPage() {
                   <button
                     type="button"
                     onClick={() => openEmail(email.id)}
-                    className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200"
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     View Details
                   </button>
@@ -235,7 +235,7 @@ export default function EmailInboxPage() {
                     <button
                       type="button"
                       onClick={() => openSummary(email.id)}
-                      className="rounded-xl border border-sky-400/40 px-4 py-2 text-sm font-semibold text-sky-200"
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600"
                     >
                       View Summary
                     </button>
@@ -255,9 +255,10 @@ export default function EmailInboxPage() {
 
 function StatusCard({ label, value }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
       <p className="text-sm text-slate-400">{label}</p>
-      <h3 className="mt-2 text-lg font-semibold text-white">{value}</h3>
+      <h3 className="mt-2 text-lg font-semibold text-slate-900">{value}</h3>
     </div>
   );
 }
+

@@ -5,19 +5,19 @@ import { useAuth } from "../context/AuthContext";
 import { emailApi, emailReplyApi, gmailApi, mailCallApi, reminderApi, summaryApi } from "../lib/api";
 
 const STATUS_STYLES = {
-  success: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
-  warning: "border-amber-400/30 bg-amber-500/10 text-amber-200",
-  danger: "border-red-400/30 bg-red-500/10 text-red-200",
-  neutral: "border-white/10 bg-white/5 text-slate-200",
+  success: "border-emerald-400/30 bg-slate-50 text-slate-700",
+  warning: "border-slate-200 bg-slate-50 text-slate-700",
+  danger: "border-red-400/30 bg-slate-50 text-slate-700",
+  neutral: "border-slate-200 bg-white text-slate-700",
 };
 
 function SectionCard({ eyebrow, title, description, children, actions, compact = false }) {
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-soft sm:p-6">
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft sm:p-6">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-sky-300">{eyebrow}</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white">{title}</h2>
+          <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{eyebrow}</p>
+          <h2 className="mt-2 text-2xl font-semibold text-slate-900">{title}</h2>
           {description ? <p className="mt-2 max-w-3xl text-sm text-slate-400">{description}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
@@ -37,10 +37,10 @@ function StatusBadge({ children, tone = "neutral" }) {
 
 function MetricCard({ label, value, hint, tone = "neutral" }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-sm text-slate-400">{label}</p>
       <div className="mt-2 flex items-center gap-2">
-        <h3 className="text-xl font-semibold text-white">{value}</h3>
+        <h3 className="text-xl font-semibold text-slate-900">{value}</h3>
         {tone ? <StatusBadge tone={tone}>{tone === "success" ? "OK" : tone === "warning" ? "Needs attention" : tone === "danger" ? "Issue" : "Info"}</StatusBadge> : null}
       </div>
       {hint ? <p className="mt-2 text-xs text-slate-400">{hint}</p> : null}
@@ -67,10 +67,10 @@ function getReminderTone(reminder) {
 
 function ReminderActionButton({ onClick, children, tone = "neutral", disabled = false }) {
   const classes = {
-    success: "border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/10",
-    warning: "border-amber-400/30 text-amber-100 hover:bg-amber-500/10",
-    danger: "border-red-400/30 text-red-100 hover:bg-red-500/10",
-    neutral: "border-white/10 text-slate-200 hover:bg-white/5",
+    success: "border-emerald-400/30 text-slate-700 hover:bg-slate-50",
+    warning: "border-slate-200 text-slate-700 hover:bg-slate-50",
+    danger: "border-red-400/30 text-slate-700 hover:bg-slate-50",
+    neutral: "border-slate-200 text-slate-700 hover:bg-slate-50",
   };
   return (
     <button
@@ -342,10 +342,10 @@ export default function DashboardPage() {
       description="A clean command center for Gmail status, summaries, voice mail calls, reminders, and recent activity."
     >
       <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <div className="rounded-3xl border border-sky-400/20 bg-sky-500/10 p-5 text-sky-50">
-          <p className="text-xs uppercase tracking-[0.32em] text-sky-200">Signed in</p>
-          <h3 className="mt-2 text-2xl font-semibold text-white">{user?.name || user?.email || "User"}</h3>
-          <p className="mt-2 max-w-3xl text-sm text-sky-100/90">
+        <div className="rounded-3xl border border-sky-400/20 bg-slate-50 p-5 text-sky-50">
+          <p className="text-xs uppercase tracking-[0.32em] text-slate-600">Signed in</p>
+          <h3 className="mt-2 text-2xl font-semibold text-slate-900">{user?.name || user?.email || "User"}</h3>
+          <p className="mt-2 max-w-3xl text-sm text-slate-700/90">
             This dashboard keeps Gmail, summaries, mail-summary calls, and reminders visible in one place so you can monitor the whole workflow at a glance.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -360,19 +360,19 @@ export default function DashboardPage() {
             </StatusBadge>
           </div>
         </div>
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-400">Quick links</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-            <Link to="/inbox" className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/5">
+            <Link to="/inbox" className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
               Open Email Inbox
             </Link>
-            <Link to="/summaries" className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/5">
+            <Link to="/summaries" className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
               Open Email Summaries
             </Link>
-            <Link to="/mail-calls" className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/5">
+            <Link to="/mail-calls" className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
               Open Mail Summary Calls
             </Link>
-            <Link to="/settings" className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/5">
+            <Link to="/settings" className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
               Open Settings / Profile
             </Link>
           </div>
@@ -397,34 +397,34 @@ export default function DashboardPage() {
               type="button"
               disabled={actionLoading.sync}
               onClick={handleSyncNow}
-              className="rounded-xl bg-sky-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {actionLoading.sync ? "Syncing..." : "Sync now"}
             </button>,
             <Link
               key="settings"
               to="/settings"
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/5"
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
               Manage Gmail
             </Link>,
           ]}
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Connection</p>
-              <p className="mt-2 text-lg font-semibold text-white">{gmailStatus.is_connected ? "Connected" : "Disconnected"}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{gmailStatus.is_connected ? "Connected" : "Disconnected"}</p>
               <p className="mt-1 text-xs text-slate-400">{gmailStatus.gmail_email || "Connect Gmail from Settings to enable reading and voice features."}</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Last sync</p>
-              <p className="mt-2 text-lg font-semibold text-white">{formatDateTime(syncStatus.last_sync_time)}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(syncStatus.last_sync_time)}</p>
               <p className="mt-1 text-xs text-slate-400">Stored emails: {syncStatus.total_emails_stored}</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-300">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             {gmailStatus.is_connected && !gmailStatus.can_send_replies ? (
-              <p className="text-amber-200">Gmail is connected, but reply permission is missing. Reconnect Gmail if you want voice replies enabled.</p>
+              <p className="text-slate-700">Gmail is connected, but reply permission is missing. Reconnect Gmail if you want voice replies enabled.</p>
             ) : (
               <p>Gmail is ready for inbox sync, summaries, and voice workflows.</p>
             )}
@@ -441,31 +441,31 @@ export default function DashboardPage() {
               type="button"
               disabled={actionLoading.summarize}
               onClick={handleGenerateTodaySummaries}
-              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {actionLoading.summarize ? "Generating..." : "Generate today’s summaries"}
             </button>,
           ]}
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Auto sync</p>
-              <p className="mt-2 text-lg font-semibold text-white">{autoSyncStatus.auto_sync_enabled ? "Enabled" : "Disabled"}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_sync_enabled ? "Enabled" : "Disabled"}</p>
               <p className="mt-1 text-xs text-slate-400">Interval: {autoSyncStatus.interval_minutes} minute(s)</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Auto summarize after sync</p>
-              <p className="mt-2 text-lg font-semibold text-white">{autoSyncStatus.auto_summarize_after_sync ? "Enabled" : "Disabled"}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_summarize_after_sync ? "Enabled" : "Disabled"}</p>
               <p className="mt-1 text-xs text-slate-400">Unsummarized: {autoSyncStatus.unsummarized_email_count ?? summaryStats.unsummarized}</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Last auto sync</p>
-              <p className="mt-2 text-lg font-semibold text-white">{formatDateTime(autoSyncStatus.last_auto_sync_at)}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(autoSyncStatus.last_auto_sync_at)}</p>
               <p className="mt-1 text-xs text-slate-400">Status: {autoSyncStatus.last_auto_sync_status || "—"}</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Last auto summary</p>
-              <p className="mt-2 text-lg font-semibold text-white">{formatDateTime(autoSyncStatus.last_auto_summary_at)}</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(autoSyncStatus.last_auto_summary_at)}</p>
               <p className="mt-1 text-xs text-slate-400">Success: {autoSyncStatus.last_auto_summary_success_count} | Failed: {autoSyncStatus.last_auto_summary_failed_count}</p>
             </div>
           </div>
@@ -485,14 +485,14 @@ export default function DashboardPage() {
               type="button"
               disabled={actionLoading.prepareCall}
               onClick={handlePrepareCall}
-              className="rounded-xl bg-sky-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {actionLoading.prepareCall ? "Preparing..." : "Prepare mail summary call"}
             </button>,
             <Link
               key="calls"
               to="/mail-calls"
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/5"
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
               Open calls page
             </Link>,
@@ -518,9 +518,9 @@ export default function DashboardPage() {
               hint="Prepared from today’s Gmail messages."
             />
           </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm text-slate-400">Latest delivery result</p>
-            <p className="mt-2 text-lg font-semibold text-white">
+            <p className="mt-2 text-lg font-semibold text-slate-900">
               {mailCallStats.lastCall
                 ? `${mailCallStats.lastCall.call_status} / ${mailCallStats.lastCall.delivery_status}${mailCallStats.lastCall.provider_status ? ` / ${mailCallStats.lastCall.provider_status}` : ""}`
                 : "No voice delivery yet"}
@@ -539,20 +539,20 @@ export default function DashboardPage() {
         >
           <form onSubmit={handleReminderSubmit} className="grid gap-4 md:grid-cols-2">
             <input
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300"
               placeholder="Reminder title"
               value={reminderForm.title}
               onChange={(e) => setReminderForm({ ...reminderForm, title: e.target.value })}
               required
             />
             <input
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300"
               placeholder="Phone number (optional)"
               value={reminderForm.phone_number}
               onChange={(e) => setReminderForm({ ...reminderForm, phone_number: e.target.value })}
             />
             <textarea
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 md:col-span-2"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 md:col-span-2"
               placeholder="Notes"
               rows="3"
               value={reminderForm.notes}
@@ -560,45 +560,45 @@ export default function DashboardPage() {
             />
             <input
               type="date"
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-sky-400/40"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-slate-300"
               value={reminderForm.reminder_date}
               onChange={(e) => setReminderForm({ ...reminderForm, reminder_date: e.target.value })}
               required
             />
             <input
               type="time"
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-sky-400/40"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-slate-300"
               value={reminderForm.reminder_time}
               onChange={(e) => setReminderForm({ ...reminderForm, reminder_time: e.target.value })}
               required
             />
             <input
-              className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 md:col-span-2"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 md:col-span-2"
               placeholder="Timezone"
               value={reminderForm.timezone}
               onChange={(e) => setReminderForm({ ...reminderForm, timezone: e.target.value })}
             />
-            <button type="submit" className="rounded-xl bg-sky-400 px-4 py-3 font-semibold text-slate-950 transition hover:bg-sky-300 md:col-span-2">
+            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white transition hover:bg-sky-300 md:col-span-2">
               Create reminder
             </button>
           </form>
 
-          {reminderMessage ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-emerald-200">{reminderMessage}</div> : null}
-          {reminderError ? <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-200">{reminderError}</div> : null}
+          {reminderMessage ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{reminderMessage}</div> : null}
+          {reminderError ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{reminderError}</div> : null}
 
           <div className="space-y-3">
             {reminders.length === 0 ? (
               <p className="text-sm text-slate-400">No reminders scheduled yet.</p>
             ) : (
               reminders.slice(0, 8).map((reminder) => (
-                <div key={reminder.id} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                <div key={reminder.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-white">{reminder.title}</h3>
+                        <h3 className="text-lg font-semibold text-slate-900">{reminder.title}</h3>
                         <StatusBadge tone={getReminderTone(reminder)}>{reminder.status}</StatusBadge>
                       </div>
-                      <p className="text-sm text-slate-300">{reminder.notes || "No notes provided."}</p>
+                      <p className="text-sm text-slate-600">{reminder.notes || "No notes provided."}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
                         <span>Due: {formatDateTime(reminder.reminder_at)}</span>
                         <span>Retry: {reminder.retry_count || 0}/{reminder.max_retry_attempts || 3}</span>
@@ -606,7 +606,7 @@ export default function DashboardPage() {
                         {reminder.snoozed_until ? <span>Snoozed until: {formatDateTime(reminder.snoozed_until)}</span> : null}
                         {reminder.last_call_status ? <span>Last call: {reminder.last_call_status}</span> : null}
                       </div>
-                      {reminder.status === "missed" ? <p className="text-xs text-amber-300">You missed this reminder. A retry may be scheduled.</p> : null}
+                      {reminder.status === "missed" ? <p className="text-xs text-slate-600">You missed this reminder. A retry may be scheduled.</p> : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {(reminder.status === "scheduled" || reminder.status === "retry_scheduled" || reminder.status === "snoozed" || reminder.status === "failed" || reminder.status === "missed") ? (
@@ -654,7 +654,7 @@ export default function DashboardPage() {
                   <div key={`recovery-${reminder.id}`} className="rounded-2xl border border-amber-400/20 bg-amber-500/5 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-semibold text-white">{reminder.title}</p>
+                        <p className="text-sm font-semibold text-slate-900">{reminder.title}</p>
                         <p className="text-xs text-slate-400">{reminder.notes || "No notes provided."}</p>
                       </div>
                       <StatusBadge tone="warning">{reminder.status}</StatusBadge>
@@ -681,13 +681,13 @@ export default function DashboardPage() {
               <p className="text-sm text-slate-400">No recent activity yet.</p>
             ) : (
               recentActivity.map((item, index) => (
-                <div key={`${item.label}-${index}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                <div key={`${item.label}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-white">{item.label}</p>
+                      <p className="text-sm font-semibold text-slate-900">{item.label}</p>
                       <p className="text-xs text-slate-400">{item.detail}</p>
                     </div>
-                    <p className="text-xs text-slate-500">{formatDateTime(item.at)}</p>
+                    <p className="text-xs text-slate-400">{formatDateTime(item.at)}</p>
                   </div>
                 </div>
               ))
@@ -702,23 +702,23 @@ export default function DashboardPage() {
           compact
         >
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Backend health</p>
-              <p className="mt-2 text-lg font-semibold text-white">See sidebar status</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">See sidebar status</p>
               <p className="mt-1 text-xs text-slate-400">The layout checks /health automatically on load.</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Reminder quota note</p>
-              <p className="mt-2 text-lg font-semibold text-white">3 mail-summary calls per day</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">3 mail-summary calls per day</p>
               <p className="mt-1 text-xs text-slate-400">Reminder calls are tracked separately and do not reduce this quota.</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Auto sync error</p>
-              <p className="mt-2 text-sm text-white">{autoSyncStatus.last_auto_sync_error || "None"}</p>
+              <p className="mt-2 text-sm text-slate-900">{autoSyncStatus.last_auto_sync_error || "None"}</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Auto summary error</p>
-              <p className="mt-2 text-sm text-white">{autoSyncStatus.last_auto_summary_error || "None"}</p>
+              <p className="mt-2 text-sm text-slate-900">{autoSyncStatus.last_auto_summary_error || "None"}</p>
             </div>
           </div>
         </SectionCard>
@@ -734,8 +734,8 @@ export default function DashboardPage() {
               <p className="text-sm text-slate-400">No email replies yet.</p>
             ) : (
               recentReplies.slice(0, 5).map((reply) => (
-                <div key={reply.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-                  <p className="text-sm font-semibold text-white">{reply.subject || "Reply"}</p>
+                <div key={reply.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">{reply.subject || "Reply"}</p>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
                     <span>Status: {reply.status}</span>
                     {reply.sent_at ? <span>Sent: {formatDateTime(reply.sent_at)}</span> : null}
@@ -747,7 +747,7 @@ export default function DashboardPage() {
           </div>
         </SectionCard>
       </div>
-      {loading ? <p className="text-xs text-slate-500">Refreshing dashboard data...</p> : null}
+      {loading ? <p className="text-xs text-slate-400">Refreshing dashboard data...</p> : null}
     </PageShell>
   );
 }
@@ -811,3 +811,4 @@ function buildRecentActivity({ sync, autoSync, mailCallHistory, reminders, recen
     .sort((a, b) => new Date(b.at) - new Date(a.at))
     .slice(0, 6);
 }
+

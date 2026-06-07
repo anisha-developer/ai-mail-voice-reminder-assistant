@@ -133,18 +133,18 @@ export default function MailSummaryCallsPage() {
         <StatCard label="Today date" value={countToday.date || "-"} />
       </div>
 
-      <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 text-slate-200">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-slate-700">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-slate-400">Mail summary call preparation</p>
-            <p className="text-lg font-semibold text-white">Only today's received emails are included in the voice call</p>
+            <p className="text-lg font-semibold text-slate-900">Only today's received emails are included in the voice call</p>
             <p className="text-sm text-slate-400">Reminder calls are not included in the daily mail summary call limit.</p>
           </div>
           <button
             type="button"
             onClick={handlePrepare}
             disabled={loading}
-            className="rounded-xl bg-sky-400 px-4 py-3 font-semibold text-slate-950 disabled:opacity-60"
+            className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white disabled:opacity-60"
           >
             {loading ? "Preparing..." : "Prepare Mail Summary Call"}
           </button>
@@ -154,22 +154,22 @@ export default function MailSummaryCallsPage() {
         </p>
       </div>
 
-      {message ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-emerald-200">{message}</div> : null}
-      {error ? <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-200">{error}</div> : null}
+      {message ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{message}</div> : null}
+      {error ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{error}</div> : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.3fr,0.7fr]">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-sm text-slate-400">Prepared script preview</p>
-              <h3 className="text-lg font-semibold text-white">Latest prepared mail summary call</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Latest prepared mail summary call</h3>
             </div>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={handleStartVoiceCall}
                 disabled={!preparedCall || preparedCall.call_status !== "prepared" || startingCall}
-                className="rounded-xl bg-sky-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {startingCall ? "Starting..." : "Start Voice Call"}
               </button>
@@ -177,7 +177,7 @@ export default function MailSummaryCallsPage() {
                 type="button"
                 onClick={handleMarkDelivered}
                 disabled={!preparedCall || delivering}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-50"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
               >
                 {delivering ? "Marking..." : "Mark as Delivered"}
               </button>
@@ -194,28 +194,28 @@ export default function MailSummaryCallsPage() {
                 <MiniStat label="Duration" value={preparedCall.call_duration_seconds ? `${preparedCall.call_duration_seconds}s` : "-"} />
                 <MiniStat label="Failure reason" value={preparedCall.failure_reason || preparedCall.provider_error_message || "-"} />
               </div>
-              <pre className="whitespace-pre-wrap rounded-2xl bg-slate-950/70 p-4 text-sm text-slate-200">
+              <pre className="whitespace-pre-wrap rounded-2xl bg-white p-4 text-sm text-slate-700">
                 {preparedCall.script_text}
               </pre>
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-white/10 p-6 text-slate-400">
+            <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-slate-400">
               No prepared mail summary call yet.
             </div>
           )}
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-400">Pending today delivery</p>
-          <h3 className="mb-4 text-lg font-semibold text-white">Today's summaries waiting for a voice call</h3>
+          <h3 className="mb-4 text-lg font-semibold text-slate-900">Today's summaries waiting for a voice call</h3>
           <div className="space-y-3">
             {pendingData.summaries.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-white/10 p-4 text-slate-400">No emails received today.</div>
+              <div className="rounded-xl border border-dashed border-slate-200 p-4 text-slate-400">No emails received today.</div>
             ) : (
               pendingData.summaries.slice(0, 8).map((summary) => (
-                <div key={summary.id} className="rounded-xl border border-white/10 p-4">
-                  <p className="font-medium text-white">{summary.subject || "(No subject)"}</p>
-                  <p className="text-sm text-slate-300">{summary.sender || "-"}</p>
+                <div key={summary.id} className="rounded-xl border border-slate-200 p-4">
+                  <p className="font-medium text-slate-900">{summary.subject || "(No subject)"}</p>
+                  <p className="text-sm text-slate-600">{summary.sender || "-"}</p>
                   <p className="mt-2 text-sm text-slate-400">{summary.short_summary || "-"}</p>
                 </div>
               ))
@@ -224,23 +224,23 @@ export default function MailSummaryCallsPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5">
         <p className="text-sm text-slate-400">Mail summary call history</p>
-        <h3 className="mb-4 text-lg font-semibold text-white">Newest first</h3>
+        <h3 className="mb-4 text-lg font-semibold text-slate-900">Newest first</h3>
         <div className="space-y-3">
           {history.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-white/10 p-4 text-slate-400">No mail summary calls yet.</div>
+            <div className="rounded-xl border border-dashed border-slate-200 p-4 text-slate-400">No mail summary calls yet.</div>
           ) : (
             history.map((item) => (
-              <div key={item.id} className="rounded-xl border border-white/10 p-4">
+              <div key={item.id} className="rounded-xl border border-slate-200 p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="font-medium text-white">Call #{item.id}</p>
-                    <p className="text-sm text-slate-300">
+                    <p className="font-medium text-slate-900">Call #{item.id}</p>
+                    <p className="text-sm text-slate-600">
                       {item.call_date} at {item.call_time}
                     </p>
                   </div>
-                  <div className="text-sm text-slate-300">
+                  <div className="text-sm text-slate-600">
                     <p>Status: {item.call_status}</p>
                     <p>Delivery: {item.delivery_status}</p>
                     <p>Today's summaries delivered: {item.summary_count}</p>
@@ -250,14 +250,14 @@ export default function MailSummaryCallsPage() {
                     <p>Failure: {item.failure_reason || item.provider_error_message || "-"}</p>
                   </div>
                 </div>
-                <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/40 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Voice interactions</p>
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Voice interactions</p>
                   <div className="mt-3 space-y-3">
                     {(interactionsByCallId[item.id] || []).length === 0 ? (
                       <p className="text-sm text-slate-400">No captured speech interactions yet.</p>
                     ) : (
                       (interactionsByCallId[item.id] || []).map((interaction) => (
-                        <div key={interaction.id} className="rounded-lg border border-white/10 p-3 text-sm text-slate-300">
+                        <div key={interaction.id} className="rounded-lg border border-slate-200 p-3 text-sm text-slate-600">
                           <p>Order: {interaction.interaction_order}</p>
                           <p>Transcript: {interaction.user_transcript || "-"}</p>
                           <p>Detected intent: {interaction.detected_intent}</p>
@@ -280,18 +280,19 @@ export default function MailSummaryCallsPage() {
 
 function StatCard({ label, value }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
       <p className="text-sm text-slate-400">{label}</p>
-      <h3 className="mt-2 text-lg font-semibold text-white">{value}</h3>
+      <h3 className="mt-2 text-lg font-semibold text-slate-900">{value}</h3>
     </div>
   );
 }
 
 function MiniStat({ label, value }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-      <p className="mt-2 text-sm text-slate-200">{value}</p>
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-2 text-sm text-slate-700">{value}</p>
     </div>
   );
 }
+

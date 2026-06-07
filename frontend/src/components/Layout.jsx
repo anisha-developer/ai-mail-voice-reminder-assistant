@@ -24,22 +24,22 @@ export default function Layout() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_transparent_35%),linear-gradient(180deg,_#020617_0%,_#0f172a_100%)]">
+    <div className="min-h-screen bg-[linear-gradient(180deg,_#ffffff_0%,_#f8fafc_100%)] text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col lg:flex-row">
-        <aside className="border-r border-white/10 bg-slate-950/70 p-6 backdrop-blur lg:w-72">
+        <aside className="border-r border-slate-200 bg-white/90 p-6 backdrop-blur lg:w-72">
           <div className="mb-8">
-            <p className="text-xs uppercase tracking-[0.35em] text-sky-300">AI Mail Assistant</p>
-            <h1 className="mt-3 text-2xl font-semibold text-white">
+            <p className="text-xs uppercase tracking-[0.35em] text-slate-500">AI Mail Assistant</p>
+            <h1 className="mt-3 text-2xl font-semibold text-slate-900">
               Welcome{user?.name ? `, ${user.name}` : ""}
             </h1>
-            <p className="mt-2 text-sm text-slate-400">{health}</p>
+            <p className="mt-2 text-sm text-slate-600">{health}</p>
             <button
               type="button"
               onClick={() => {
                 logout();
                 navigate("/login");
               }}
-              className="mt-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-200 hover:bg-white/5"
+              className="mt-4 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
               Logout
             </button>
@@ -52,7 +52,7 @@ export default function Layout() {
                 end={item.to === "/"}
                 className={({ isActive }) =>
                   `block rounded-xl px-4 py-3 text-sm transition ${
-                    isActive ? "bg-sky-500 text-slate-950 font-semibold" : "text-slate-300 hover:bg-white/5"
+                    isActive ? "bg-slate-900 text-white font-semibold" : "text-slate-700 hover:bg-slate-100"
                   }`
                 }
               >
@@ -62,7 +62,7 @@ export default function Layout() {
           </nav>
         </aside>
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-soft backdrop-blur sm:p-8">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm backdrop-blur sm:p-8">
             <Outlet />
           </div>
         </main>
