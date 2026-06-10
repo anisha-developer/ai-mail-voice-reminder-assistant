@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.models.user_call_preference import UserCallPreference
 from app.models.user_preference import UserPreference
 from app.schemas.user import UpdateUserRequest, UserMeResponse
 
@@ -32,6 +33,10 @@ def update_me(db: Session, user: User, payload: UpdateUserRequest) -> UserMeResp
         if payload.preferred_language is not None:
             preferences.preferred_language = payload.preferred_language
         db.add(preferences)
+    call_preferences = db.query(UserCallPreference).filter(UserCallPreference.user_id == user.id).first()
+    if call_preferences and payload.timezone is not None:
+        call_preferences.timezone = payload.timezone
+        db.add(call_preferences)
     db.commit()
     db.refresh(user)
     return get_me(user)

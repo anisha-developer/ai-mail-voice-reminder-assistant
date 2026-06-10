@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -29,10 +30,12 @@ from app.services.voice_reminder_service import (
 )
 from app.services.mail_summary_call_service import mark_mail_call_delivered
 from app.services.gmail_reply_service import cancel_reply, get_active_reply_session, send_reply, start_reply_session, update_reply_body
+from app.services.elevenlabs_service import start_mail_summary_call_with_elevenlabs
 from app.services.voice_email_lookup_service import get_last_explained_email_for_call, resolve_email_reference_for_call
 from app.services.voice_intent_service import (
     INTENT_DETAIL_EMAIL,
     INTENT_END_CALL,
+    INTENT_CREATE_RECURRING_REMINDER,
     INTENT_HELP,
     INTENT_IMPORTANT_CHECK,
     INTENT_CANCEL_REPLY,
@@ -54,6 +57,11 @@ from app.services.voice_intent_service import (
     ParsedVoiceIntent,
     parse_voice_intent,
 )
+from app.services.smart_voice_intent_service import (
+    INTENT_NEXT_EMAIL,
+    INTENT_PREVIOUS_EMAIL,
+    resolve_smart_voice_intent,
+)
 
 VOICE_PROVIDER_TWILIO = "twilio"
 TWILIO_TERMINAL_FAILURE_STATES = {"failed", "busy", "no-answer", "canceled"}
@@ -66,6 +74,44 @@ MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
 
 logger = logging.getLogger(__name__)
+
+
+def _recurring_payload_is_ready(smart_resolution) -> bool:
+    repeat_type = getattr(smart_resolution, "repeat_type", None)
+    if repeat_type in {"daily", "weekdays"}:
+        return bool(getattr(smart_resolution, "time_of_day", None))
+    if repeat_type in {"weekly", "custom_days"}:
+        return bool(getattr(smart_resolution, "days_of_week", None) and getattr(smart_resolution, "time_of_day", None))
+    if repeat_type == "monthly":
+        return bool(getattr(smart_resolution, "day_of_month", None) and getattr(smart_resolution, "time_of_day", None))
+    if repeat_type == "custom_interval":
+        return bool(getattr(smart_resolution, "interval_value", None) and getattr(smart_resolution, "interval_unit", None))
+    return False
+
+
+def _recurring_confirmation_text(session: VoiceReminderSession, reminder_dt: datetime | None = None) -> str:
+    title = session.reminder_title or "Recurring reminder"
+    parts = [f"I will create a recurring reminder titled {title}."]
+    repeat_type = session.repeat_type or "recurring"
+    if repeat_type == "daily":
+        parts.append(f"It will repeat every day at {session.time_of_day or 'the requested time'}.")
+    elif repeat_type == "weekdays":
+        parts.append(f"It will repeat on weekdays at {session.time_of_day or 'the requested time'}.")
+    elif repeat_type in {"weekly", "custom_days"}:
+        days = ", ".join((json.loads(session.days_of_week) if session.days_of_week else []) or [])
+        parts.append(f"It will repeat on {days or 'the selected days'} at {session.time_of_day or 'the requested time'}.")
+    elif repeat_type == "monthly":
+        parts.append(f"It will repeat on day {session.day_of_month or 'the selected day'} of each month at {session.time_of_day or 'the requested time'}.")
+    elif repeat_type == "custom_interval":
+        parts.append(
+            f"It will repeat every {session.interval_value or 1} {session.interval_unit or 'days'}."
+        )
+    elif reminder_dt is not None:
+        parts.append(
+            f"It will start on {reminder_dt.astimezone(timezone.utc).strftime('%A %B %d at %I:%M %p UTC')}."
+        )
+    parts.append("Say yes save it, or press 1 to save. Say no cancel, or press 2 to cancel.")
+    return " ".join(parts)
 
 def _require_twilio_config() -> None:
     missing = []
@@ -124,7 +170,6 @@ def _get_mail_call_by_provider_call_id(db: Session, provider_call_id: str) -> Ma
 
 
 def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> dict[str, str]:
-    _require_twilio_config()
     to_phone = _validate_user_phone(user)
     call_log = get_mail_call_for_user(db, user, call_log_id)
 
@@ -135,6 +180,37 @@ def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> 
     if not call_log.script_text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prepared call script is missing")
 
+    provider = (settings.voice_agent_provider or VOICE_PROVIDER_TWILIO).strip().lower()
+    if provider == "elevenlabs":
+        try:
+            elevenlabs_result = start_mail_summary_call_with_elevenlabs(db, user, call_log)
+        except HTTPException as exc:
+            logger.warning(
+                "ElevenLabs provider unavailable for mail summary call_log_id=%s; falling back to Twilio: %s",
+                call_log.id,
+                exc.detail,
+            )
+        else:
+            provider_call_id = elevenlabs_result.get("provider_call_id") or f"elevenlabs-{call_log.id}"
+            provider_status = elevenlabs_result.get("status") or "queued"
+            call_log.provider = "elevenlabs"
+            call_log.provider_call_id = provider_call_id
+            call_log.to_phone_number = to_phone
+            call_log.from_phone_number = None
+            call_log.provider_status = provider_status
+            call_log.call_status = provider_status.replace("-", "_")
+            call_log.delivery_status = "pending"
+            call_log.updated_at = datetime.now(timezone.utc)
+            db.add(call_log)
+            db.commit()
+            return {
+                "call_log_id": call_log.id,
+                "provider": "elevenlabs",
+                "provider_call_id": provider_call_id,
+                "call_status": call_log.call_status,
+            }
+
+    _require_twilio_config()
     client = _twilio_client()
     twiml_url = f"{_voice_base_url()}/voice/mail-calls/{call_log.id}/twiml"
     status_callback = f"{_voice_base_url()}/voice/webhooks/twilio/status"
@@ -615,7 +691,7 @@ def process_twilio_speech_webhook(
         if digits and not parsed.digits:
             parsed.digits = digits
         if active_reminder.status == "awaiting_details":
-            reminder_dt = parse_reminder_datetime(transcript)
+            reminder_dt = parse_reminder_datetime(transcript, call_log.user.timezone)
             normalized = (transcript or "").strip().lower()
             if digits == "2" or parsed.intent in {INTENT_CANCEL_REMINDER_CREATE, INTENT_END_CALL} or normalized in {"no", "cancel", "no cancel", "cancel reminder", "stop", "don't save", "dont save", "do not save"}:
                 process_reminder_session_webhook(db, call_log, active_reminder, transcript, confidence, parsed)
@@ -666,6 +742,39 @@ def process_twilio_speech_webhook(
                 intent = INTENT_UNKNOWN
         except ValueError:
             intent = INTENT_UNKNOWN
+
+    last_explained_reference = _last_explained_email_reference(db, call_log)
+    smart_resolution = resolve_smart_voice_intent(
+        transcript,
+        parsed_intent,
+        call_log.user.timezone,
+        last_explained_email_reference=last_explained_reference,
+    )
+    if smart_resolution.needs_clarification and (intent == INTENT_UNKNOWN or smart_resolution.intent != INTENT_UNKNOWN):
+        clarification = smart_resolution.clarification_question or "I can help with your emails during this call."
+        _record_interaction(
+            db,
+            call_log,
+            transcript,
+            smart_resolution.intent if smart_resolution.intent != INTENT_UNKNOWN else INTENT_UNKNOWN,
+            smart_resolution.email_reference,
+            confidence,
+            clarification,
+        )
+        return build_gather_prompt_twiml(call_log.id, clarification)
+
+    if smart_resolution.intent == INTENT_NEXT_EMAIL:
+        intent = INTENT_DETAIL_EMAIL
+        email_reference = (last_explained_reference or 0) + 1
+    elif smart_resolution.intent == INTENT_PREVIOUS_EMAIL:
+        intent = INTENT_DETAIL_EMAIL
+        email_reference = max(1, (last_explained_reference or 2) - 1)
+    elif smart_resolution.intent != INTENT_UNKNOWN:
+        intent = smart_resolution.intent
+        if smart_resolution.email_reference is not None:
+            email_reference = smart_resolution.email_reference
+        if smart_resolution.reminder_datetime_iso:
+            parsed_intent.reminder_datetime_iso = smart_resolution.reminder_datetime_iso
 
     repeat_count = _interaction_count_for_intent(db, call_log.id, INTENT_REPEAT_SUMMARY)
     detail_count = _interaction_count_for_intent(db, call_log.id, INTENT_DETAIL_EMAIL)
@@ -795,7 +904,38 @@ def process_twilio_speech_webhook(
         _record_interaction(db, call_log, transcript, INTENT_START_EMAIL_REPLY, target_ref, confidence, system_response)
         return build_gather_prompt_twiml(call_log.id, system_response)
 
-    if intent == INTENT_START_REMINDER_CREATE:
+    if intent in {INTENT_START_REMINDER_CREATE, INTENT_CREATE_RECURRING_REMINDER}:
+        if smart_resolution.intent == INTENT_CREATE_RECURRING_REMINDER:
+            session = start_reminder_session(
+                db,
+                call_log.user,
+                call_log,
+                None,
+                target_email_reference=parsed_intent.target_email_reference or parsed_intent.email_reference,
+                reminder_text=parsed_intent.reminder_text or transcript,
+                repeat_type=smart_resolution.repeat_type,
+                interval_value=smart_resolution.interval_value,
+                interval_unit=smart_resolution.interval_unit,
+                days_of_week=smart_resolution.days_of_week,
+                day_of_month=smart_resolution.day_of_month,
+                time_of_day=smart_resolution.time_of_day,
+            )
+            if not _recurring_payload_is_ready(smart_resolution):
+                system_response = (
+                    "What repeat schedule should I use? You can say every day at 8 pm, every Monday at 9 am, "
+                    "or every 2 hours."
+                )
+                _record_interaction(db, call_log, transcript, INTENT_CREATE_RECURRING_REMINDER, None, confidence, system_response)
+                return build_gather_prompt_twiml(call_log.id, system_response)
+            session.status = "awaiting_confirmation"
+            session.updated_at = datetime.now(timezone.utc)
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+            confirmation_text = _recurring_confirmation_text(session)
+            _record_interaction(db, call_log, transcript, INTENT_CREATE_RECURRING_REMINDER, session.target_email_reference, confidence, confirmation_text)
+            return build_reminder_confirmation_twiml(call_log.id, confirmation_text)
+
         target_summary = None
         target_ref = parsed_intent.target_email_reference or parsed_intent.email_reference
         if target_ref is not None:
@@ -835,7 +975,12 @@ def process_twilio_speech_webhook(
                 _record_interaction(db, call_log, transcript, INTENT_START_REMINDER_CREATE, None, confidence, system_response)
                 return build_gather_prompt_twiml(call_log.id, system_response)
 
-        reminder_dt = parse_reminder_datetime(transcript)
+        reminder_dt = parse_reminder_datetime(transcript, call_log.user.timezone)
+        if reminder_dt is None and parsed_intent.reminder_datetime_iso:
+            try:
+                reminder_dt = datetime.fromisoformat(parsed_intent.reminder_datetime_iso)
+            except ValueError:
+                reminder_dt = None
         if target_summary is None and any(marker in (transcript or "").lower() for marker in ("this email", "this mail", "this one")):
             system_response = "Which email should I create the reminder for? Please say email number one, or describe the email."
             _record_interaction(db, call_log, transcript, INTENT_START_REMINDER_CREATE, None, confidence, system_response)
@@ -875,7 +1020,10 @@ def process_twilio_speech_webhook(
         _record_interaction(db, call_log, transcript, INTENT_END_CALL, email_reference, confidence, system_response)
         return build_end_call_twiml()
 
-    system_response = "Sorry, I did not understand. You can say repeat summary, explain email number one, remind me about this email in two minutes, or no to end the call."
+    if smart_resolution.needs_clarification:
+        system_response = smart_resolution.clarification_question or "I can help with your emails during this call."
+    else:
+        system_response = "Sorry, I did not understand. You can say repeat summary, explain email one, remind me about this email, reply to this email, or no to end the call."
     _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
     return build_unknown_twiml(call_log.id)
 

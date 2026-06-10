@@ -157,7 +157,7 @@ export default function MailSummaryCallsPage() {
       {message ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{message}</div> : null}
       {error ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{error}</div> : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.3fr,0.7fr]">
+      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>

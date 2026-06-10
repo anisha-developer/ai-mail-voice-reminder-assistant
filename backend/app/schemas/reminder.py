@@ -5,10 +5,12 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ReminderCreate(BaseModel):
+    type: str | None = None
     title: str
     notes: str | None = None
     reminder_date: str
-    reminder_time: str
+    reminder_time: str | None = None
+    time_of_day: str | None = None
     timezone: str | None = None
     phone_number: str | None = None
 
@@ -34,12 +36,29 @@ class ReminderCreate(BaseModel):
             raise ValueError("Invalid timezone") from exc
         return value
 
+    @field_validator("reminder_time", "time_of_day")
+    @classmethod
+    def validate_time_of_day(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            return None
+        parts = value.split(":")
+        if len(parts) != 2 or any(not part.isdigit() for part in parts):
+            raise ValueError("Time must be HH:MM")
+        hour, minute = map(int, parts)
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("Time must be HH:MM")
+        return f"{hour:02d}:{minute:02d}"
+
 
 class ReminderUpdate(BaseModel):
     title: str | None = None
     notes: str | None = None
     reminder_date: str | None = None
     reminder_time: str | None = None
+    time_of_day: str | None = None
     timezone: str | None = None
     phone_number: str | None = None
     status: str | None = None

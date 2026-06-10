@@ -26,6 +26,8 @@ class User(Base):
     mail_summary_call_logs = relationship("MailSummaryCallLog", back_populates="user", cascade="all, delete-orphan")
     reminders = relationship("Reminder", back_populates="user", cascade="all, delete-orphan")
     reminder_call_logs = relationship("ReminderCallLog", back_populates="user", cascade="all, delete-orphan")
+    recurring_reminder_rules = relationship("RecurringReminderRule", back_populates="user", cascade="all, delete-orphan")
     action_logs = relationship("ActionLog", back_populates="user", cascade="all, delete-orphan")
     gmail_connections = relationship("GmailConnection", back_populates="user", cascade="all, delete-orphan")
     voice_call_interactions = relationship("VoiceCallInteraction", back_populates="user", cascade="all, delete-orphan")
+    call_preferences = relationship("UserCallPreference", back_populates="user", cascade="all, delete-orphan")

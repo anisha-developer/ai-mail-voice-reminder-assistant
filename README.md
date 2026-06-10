@@ -16,6 +16,9 @@ This project combines Gmail OAuth, Gmail sync, AI summarization, Twilio voice de
 - Manual and automatic Gmail sync
 - Email summarization and today-only summary support
 - Twilio voice mail-summary calls
+- Smart conversational voice intent resolution with natural language fallback
+- Natural language reminder time parsing with timezone-aware defaults
+- User-configurable daily mail summary call preferences
 - Voice explanation of a numbered email
 - Voice reminder creation from an email context
 - Email-linked reminders
@@ -83,6 +86,12 @@ Use this end-to-end demo script:
 - Gmail sync
 - AI email summarization
 - Voice mail-summary call
+- Smart conversational voice agent
+- Natural language reminder time support
+- Call schedule preferences
+- Minimum email count rule for scheduled calls
+- Skip calls when no new emails
+- Avoid repeating delivered emails
 - Email detail explanation by voice
 - Voice reminder creation
 - Email-linked reminders
@@ -155,6 +164,15 @@ cd frontend
 npm run build
 ```
 
+## Demo Examples
+
+- `Can you explain the first one?`
+- `Tell me more about the college email.`
+- `Remind me about this tomorrow morning.`
+- `Remind me at 6 PM.`
+- `Skip this and go to the next email.`
+- `End the call.`
+
 ## Backend Commands
 
 - Start backend locally: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
@@ -210,7 +228,15 @@ Expected result:
 - Profile data is returned for the authenticated user
 - Without the token, the API returns `401 Unauthorized`
 
-### 4. Test Frontend Protected Route
+### 4. Test Call Preferences
+
+1. Open Settings / Profile
+2. Adjust the three daily summary call slots
+3. Set the timezone and minimum new-email threshold
+4. Save the preferences
+5. Confirm the dashboard preview updates to show the next scheduled summary call and skip/call status
+
+### 5. Test Frontend Protected Route
 
 1. Open `http://localhost:5173`
 2. If not logged in, the app should redirect to `/login`
@@ -257,6 +283,10 @@ The Gmail OAuth flow uses:
 ### Reminder Agent
 
 Reminder calls are separate from mail summary calls.
+
+## Known Benign Warning
+
+You may see a benign `passlib/bcrypt` warning about reading the bcrypt version at startup. It does not block authentication, and the full test suite still passes.
 
 Default reminder behavior:
 

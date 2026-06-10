@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 import logging
 import re
 from zoneinfo import ZoneInfo
@@ -14,16 +15,17 @@ from twilio.twiml.voice_response import Gather, VoiceResponse
 from app.config import settings
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.recurring_reminder_rule import RecurringReminderRule
 from app.models.reminder import Reminder
 from app.models.user import User
 from app.models.voice_reminder_session import VoiceReminderSession
+from app.services.recurring_reminder_service import create_recurring_rule
 from app.services.reminder_service import create_reminder
 from app.services.voice_email_lookup_service import resolve_email_reference_for_call
 from app.services.voice_intent_service import (
     INTENT_CANCEL_REMINDER_CREATE,
     INTENT_CONFIRM_CREATE_REMINDER,
     INTENT_DETAIL_EMAIL,
-    INTENT_END_CALL,
     INTENT_START_REMINDER_CREATE,
     INTENT_UNKNOWN,
     LOOKUP_FIRST,
@@ -128,6 +130,12 @@ def start_reminder_session(
     target_email_reference: int | None = None,
     reminder_datetime: datetime | None = None,
     reminder_text: str | None = None,
+    repeat_type: str | None = None,
+    interval_value: int | None = None,
+    interval_unit: str | None = None,
+    days_of_week: list[str] | None = None,
+    day_of_month: int | None = None,
+    time_of_day: str | None = None,
 ) -> VoiceReminderSession:
     title = f"Check email: {summary.subject or 'No subject'}" if summary else "General reminder"
     notes_parts: list[str] = []
@@ -152,6 +160,12 @@ def start_reminder_session(
         reminder_at=reminder_datetime,
         reminder_timezone=user.timezone or "UTC",
         reminder_phone_number=user.phone_number,
+        repeat_type=repeat_type,
+        interval_value=interval_value,
+        interval_unit=interval_unit,
+        days_of_week=json.dumps(days_of_week) if days_of_week else None,
+        day_of_month=day_of_month,
+        time_of_day=time_of_day,
         status="awaiting_confirmation" if reminder_datetime else "awaiting_details",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -214,6 +228,27 @@ def _build_create_payload(user: User, session: VoiceReminderSession):
     )()
 
 
+def _build_recurring_payload(user: User, session: VoiceReminderSession):
+    return type(
+        "_RecurringPayload",
+        (),
+        {
+            "title": session.reminder_title or "Recurring reminder",
+            "notes": session.reminder_notes,
+            "timezone": session.reminder_timezone or user.timezone or "UTC",
+            "repeat_type": session.repeat_type,
+            "interval_value": session.interval_value,
+            "interval_unit": session.interval_unit,
+            "days_of_week": json.loads(session.days_of_week) if session.days_of_week else None,
+            "day_of_month": session.day_of_month,
+            "time_of_day": session.time_of_day,
+            "source_type": "voice",
+            "email_message_id": session.email_message_id,
+            "email_summary_id": session.email_summary_id,
+        },
+    )()
+
+
 def send_reminder_creation(db: Session, user: User, session: VoiceReminderSession) -> Reminder:
     reminder = create_reminder(db, user, _build_create_payload(user, session))
     created = db.query(Reminder).filter(Reminder.id == reminder["id"]).first()
@@ -221,6 +256,21 @@ def send_reminder_creation(db: Session, user: User, session: VoiceReminderSessio
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Reminder could not be created")
     session.status = "created"
     session.created_reminder_id = created.id
+    session.updated_at = datetime.now(timezone.utc)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return created
+
+
+def send_recurring_reminder_creation(db: Session, user: User, session: VoiceReminderSession):
+    payload = _build_recurring_payload(user, session)
+    rule = create_recurring_rule(db, user, payload)
+    created = db.query(RecurringReminderRule).filter(RecurringReminderRule.id == rule["id"]).first()
+    if created is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Recurring reminder could not be created")
+    session.status = "created"
+    session.created_recurring_rule_id = created.id
     session.updated_at = datetime.now(timezone.utc)
     db.add(session)
     db.commit()
@@ -267,15 +317,57 @@ def _parse_iso_datetime(candidate: str | None) -> datetime | None:
         return None
 
 
-def _parse_relative_reminder_time(text: str, base: datetime | None = None) -> datetime | None:
+DEFAULT_TIME_PERIODS = {
+    "morning": (9, 0),
+    "afternoon": (14, 0),
+    "evening": (18, 0),
+    "night": (20, 0),
+    "tonight": (20, 0),
+    "after lunch": (14, 0),
+}
+
+
+def _parse_relative_reminder_time(text: str, timezone_name: str, base: datetime | None = None) -> datetime | None:
     from dateparser import parse as dateparse
 
-    base_dt = base or datetime.now(timezone.utc)
+    try:
+        local_zone = ZoneInfo(timezone_name or "UTC")
+    except Exception:
+        local_zone = timezone.utc
+    base_dt = base or datetime.now(local_zone)
+    normalized = text.strip().lower()
+    if normalized in {"tomorrow"}:
+        return None
+    direct_time_match = re.fullmatch(r"(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", normalized)
+    if direct_time_match:
+        hour = int(direct_time_match.group(1))
+        minute = int(direct_time_match.group(2) or "00")
+        period = direct_time_match.group(3)
+        if period == "pm" and hour != 12:
+            hour += 12
+        if period == "am" and hour == 12:
+            hour = 0
+        candidate = base_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= base_dt:
+            candidate += timedelta(days=1)
+        return candidate.astimezone(timezone.utc)
+    if re.search(r"\b(?:today|tomorrow|next\s+\w+|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", normalized) and not re.search(
+        r"\b(?:\d{1,2}[:.]\d{2}(?:\s*(?:am|pm))?|\d{1,2}\s*(?:am|pm)|morning|afternoon|evening|night|tonight|noon|midnight|after lunch)\b",
+        normalized,
+    ):
+        return None
+    for phrase, (hour, minute) in DEFAULT_TIME_PERIODS.items():
+        if phrase in normalized and "tomorrow" in normalized:
+            candidate = base_dt + timedelta(days=1)
+            return candidate.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
+        if normalized == phrase:
+            candidate = base_dt
+            return candidate.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
     parsed = dateparse(
         text,
         settings={
             "RETURN_AS_TIMEZONE_AWARE": True,
-            "TIMEZONE": "UTC",
+            "TIMEZONE": timezone_name or "UTC",
             "TO_TIMEZONE": "UTC",
             "RELATIVE_BASE": base_dt,
         },
@@ -283,9 +375,11 @@ def _parse_relative_reminder_time(text: str, base: datetime | None = None) -> da
     return parsed.astimezone(timezone.utc) if parsed else None
 
 
-def parse_reminder_datetime(transcript: str | None) -> datetime | None:
+def parse_reminder_datetime(transcript: str | None, timezone_name: str | None = None, base: datetime | None = None) -> datetime | None:
     text = normalize_reminder_text(transcript)
     if not text:
+        return None
+    if text == "tomorrow":
         return None
     parsed = _parse_iso_datetime(text)
     if parsed is not None:
@@ -297,8 +391,9 @@ def parse_reminder_datetime(transcript: str | None) -> datetime | None:
             text,
             settings={
                 "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": "UTC",
+                "TIMEZONE": timezone_name or "UTC",
                 "TO_TIMEZONE": "UTC",
+                "RELATIVE_BASE": base or datetime.now(timezone.utc),
             },
         )
         if matches:
@@ -308,7 +403,7 @@ def parse_reminder_datetime(transcript: str | None) -> datetime | None:
     except Exception:
         logger.exception("Failed to search reminder datetime from %r", text)
     try:
-        return _parse_relative_reminder_time(text)
+        return _parse_relative_reminder_time(text, timezone_name or "UTC", base=base)
     except Exception:
         logger.exception("Failed to parse reminder datetime from %r", text)
         return None
@@ -323,7 +418,14 @@ def reminder_session_to_dict(session: VoiceReminderSession) -> dict[str, object]
         "reminder_at": session.reminder_at,
         "reminder_timezone": session.reminder_timezone,
         "reminder_phone_number": session.reminder_phone_number,
+        "repeat_type": session.repeat_type,
+        "interval_value": session.interval_value,
+        "interval_unit": session.interval_unit,
+        "days_of_week": json.loads(session.days_of_week) if session.days_of_week else None,
+        "day_of_month": session.day_of_month,
+        "time_of_day": session.time_of_day,
         "created_reminder_id": session.created_reminder_id,
+        "created_recurring_rule_id": session.created_recurring_rule_id,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
     }
@@ -349,14 +451,17 @@ def process_reminder_session_webhook(
     except Exception:
         digits = None
     intent = parsed_intent.intent
-    if digits == "2" or intent in {INTENT_CANCEL_REMINDER_CREATE, INTENT_END_CALL} or normalized in {"no", "cancel", "no cancel", "cancel reminder"}:
+    if digits == "2" or intent == INTENT_CANCEL_REMINDER_CREATE or normalized in {"no", "cancel", "no cancel", "cancel reminder", "end call", "stop", "hang up"}:
         cancel_reminder_session(db, session, "user cancelled reminder creation")
         return build_reminder_cancellation_twiml()
     if digits == "1" or intent == INTENT_CONFIRM_CREATE_REMINDER or normalized in {"yes", "yeah", "yep", "ok", "okay", "save", "save it", "save this", "yes save", "yes save it", "yes create it", "create it", "create", "confirm", "okay save it", "ok save it", "yeah save it", "yes please", "do it"} or normalized.startswith("yes "):
-        created = send_reminder_creation(db, call_log.user, session)
+        if session.repeat_type:
+            created = send_recurring_reminder_creation(db, call_log.user, session)
+        else:
+            created = send_reminder_creation(db, call_log.user, session)
         return build_reminder_created_twiml()
     if session.status == "awaiting_details":
-        parsed = parse_reminder_datetime(text)
+        parsed = parse_reminder_datetime(text, session.reminder_timezone or call_log.user.timezone)
         if parsed is None:
             return build_reminder_details_prompt(call_log.id)
         update_reminder_details(db, session, parsed, session.reminder_timezone or call_log.user.timezone or "UTC")

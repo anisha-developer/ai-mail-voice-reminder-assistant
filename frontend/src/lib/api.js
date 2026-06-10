@@ -92,6 +92,11 @@ export const mailCallApi = {
   getInteractions: (callLogId) => apiRequest(`/voice/mail-calls/${callLogId}/interactions`),
 };
 
+export const callPreferencesApi = {
+  get: () => apiRequest("/call-preferences"),
+  update: (payload) => apiRequest("/call-preferences", { method: "PUT", body: JSON.stringify(payload) }),
+};
+
 export const reminderApi = {
   createReminder: (payload) => apiRequest("/reminders", { method: "POST", body: JSON.stringify(payload) }),
   listReminders: (includeCancelled = false) => apiRequest(`/reminders?include_cancelled=${includeCancelled ? "true" : "false"}`),
@@ -101,6 +106,18 @@ export const reminderApi = {
   callAgain: (id) => apiRequest(`/reminders/${id}/call-again`, { method: "POST" }),
   snooze: (id, minutes) => apiRequest(`/reminders/${id}/snooze`, { method: "POST", body: JSON.stringify({ minutes }) }),
   markDone: (id) => apiRequest(`/reminders/${id}/mark-done`, { method: "POST" }),
+};
+
+export const recurringReminderApi = {
+  list: () => apiRequest("/recurring-reminders"),
+  create: (payload) => apiRequest("/recurring-reminders", { method: "POST", body: JSON.stringify(payload) }),
+  get: (id) => apiRequest(`/recurring-reminders/${id}`),
+  update: (id, payload) => apiRequest(`/recurring-reminders/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  pause: (id) => apiRequest(`/recurring-reminders/${id}/pause`, { method: "POST" }),
+  resume: (id) => apiRequest(`/recurring-reminders/${id}/resume`, { method: "POST" }),
+  cancel: (id) => apiRequest(`/recurring-reminders/${id}/cancel`, { method: "POST" }),
+  delete: (id) => apiRequest(`/recurring-reminders/${id}`, { method: "DELETE" }),
+  occurrences: (id) => apiRequest(`/recurring-reminders/${id}/occurrences`),
 };
 
 export const emailReplyApi = {

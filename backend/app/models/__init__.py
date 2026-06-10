@@ -6,7 +6,9 @@ from app.models.gmail_connection import GmailConnection
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.reminder import Reminder
 from app.models.reminder_call_log import ReminderCallLog
+from app.models.recurring_reminder_rule import RecurringReminderRule
 from app.models.voice_reminder_session import VoiceReminderSession
+from app.models.user_call_preference import UserCallPreference
 from app.models.user import User
 from app.models.user_preference import UserPreference
 from app.models.voice_call_interaction import VoiceCallInteraction

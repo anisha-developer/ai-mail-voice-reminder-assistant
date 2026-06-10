@@ -12,8 +12,10 @@ from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.email_reply_action import EmailReplyAction
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.recurring_reminder_rule import RecurringReminderRule
 from app.models.user import User
 from app.models.voice_call_interaction import VoiceCallInteraction
+from app.models.voice_reminder_session import VoiceReminderSession
 from app.models.voice_reply_session import VoiceReplySession
 from app.services import voice_call_service
 
@@ -115,12 +117,24 @@ def _create_voice_test_call() -> tuple[int, list[int], list[int]]:
 def _cleanup_voice_test_call(call_log_id: int, summary_ids: list[int], message_ids: list[int]) -> None:
     db = SessionLocal()
     try:
+        session_ids = [
+            row[0]
+            for row in db.query(VoiceReminderSession.created_recurring_rule_id)
+            .filter(
+                VoiceReminderSession.mail_call_log_id == call_log_id,
+                VoiceReminderSession.created_recurring_rule_id.is_not(None),
+            )
+            .all()
+        ]
         db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(EmailReplyAction).filter(EmailReplyAction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(VoiceReplySession).filter(VoiceReplySession.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
         db.query(EmailSummary).filter(EmailSummary.id.in_(summary_ids)).delete(synchronize_session=False)
         db.query(EmailMessage).filter(EmailMessage.id.in_(message_ids)).delete(synchronize_session=False)
+        if session_ids:
+            db.query(RecurringReminderRule).filter(RecurringReminderRule.id.in_(session_ids)).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
@@ -276,5 +290,61 @@ def test_twilio_speech_webhook_handles_phase11_reply_flow(monkeypatch) -> None:
         assert any(item["detected_intent"] == "START_EMAIL_REPLY" for item in payload)
         assert any(item["detected_intent"] == "CAPTURE_REPLY_BODY" for item in payload)
         assert any(item["detected_intent"] == "CONFIRM_SEND_REPLY" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_speech_webhook_handles_recurring_reminder_flow() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        recurring_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Remind me every day at 8 pm", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert recurring_response.status_code == 200, recurring_response.text
+        assert "save it" in recurring_response.text.lower()
+
+        db = SessionLocal()
+        try:
+            session = db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).first()
+            assert session is not None
+            assert session.repeat_type == "daily"
+            assert session.status == "awaiting_confirmation"
+            assert session.time_of_day == "20:00"
+        finally:
+            db.close()
+
+        confirm_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "yes save it", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert confirm_response.status_code == 200, confirm_response.text
+        assert "created" in confirm_response.text.lower()
+
+        db = SessionLocal()
+        try:
+            session = db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).first()
+            assert session is not None
+            assert session.created_recurring_rule_id is not None
+            rule = db.query(RecurringReminderRule).filter(RecurringReminderRule.id == session.created_recurring_rule_id).first()
+            assert rule is not None
+            assert rule.repeat_type == "daily"
+            assert rule.time_of_day == "20:00"
+        finally:
+            db.close()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "CREATE_RECURRING_REMINDER" for item in payload)
+        assert any(item["detected_intent"] == "CONFIRM_CREATE_REMINDER" for item in payload)
     finally:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)

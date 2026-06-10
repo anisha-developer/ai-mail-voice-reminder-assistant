@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
+from app.models.user_call_preference import UserCallPreference
 from app.models.user_preference import UserPreference
 from app.schemas.auth import AuthResponse, AuthUserResponse, LoginRequest, SignupRequest
 
@@ -41,6 +42,11 @@ def signup(db: Session, payload: SignupRequest) -> AuthResponse:
         max_mail_summary_calls_per_day=3,
     )
     db.add(preferences)
+    call_preferences = UserCallPreference(
+        user_id=user.id,
+        timezone=payload.timezone or "Asia/Kolkata",
+    )
+    db.add(call_preferences)
     db.commit()
     db.refresh(user)
 

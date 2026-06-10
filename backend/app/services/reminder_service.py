@@ -45,7 +45,8 @@ def _resolve_phone(user: User, phone_number: str | None) -> str:
 
 
 def create_reminder(db: Session, user: User, payload) -> dict[str, object]:
-    reminder_at = _parse_local_reminder_datetime(payload.reminder_date, payload.reminder_time, _user_timezone_name(user, payload.timezone))
+    reminder_time = getattr(payload, "time_of_day", None) or getattr(payload, "reminder_time", None)
+    reminder_at = _parse_local_reminder_datetime(payload.reminder_date, reminder_time, _user_timezone_name(user, payload.timezone))
     if reminder_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reminder time must be in the future")
     reminder = Reminder(
@@ -99,7 +100,11 @@ def update_reminder(db: Session, user: User, reminder_id: int, payload) -> dict[
         reminder.notes = payload.notes.strip() or None
     if payload.timezone is not None or payload.reminder_date is not None or payload.reminder_time is not None:
         reminder_date = payload.reminder_date or reminder.reminder_at.astimezone(ZoneInfo(reminder.timezone or user.timezone or "UTC")).date().isoformat()
-        reminder_time = payload.reminder_time or reminder.reminder_at.astimezone(ZoneInfo(reminder.timezone or user.timezone or "UTC")).time().strftime("%H:%M")
+        reminder_time = (
+            getattr(payload, "time_of_day", None)
+            or getattr(payload, "reminder_time", None)
+            or reminder.reminder_at.astimezone(ZoneInfo(reminder.timezone or user.timezone or "UTC")).time().strftime("%H:%M")
+        )
         reminder.timezone = _user_timezone_name(user, payload.timezone or reminder.timezone)
         reminder.reminder_at = _parse_local_reminder_datetime(reminder_date, reminder_time, reminder.timezone)
     if payload.phone_number is not None:
@@ -300,12 +305,14 @@ def run_due_reminder_calls() -> None:
     from app.database.session import SessionLocal
     from app.models.user import User
     from app.config import settings
+    from app.services.recurring_reminder_service import generate_due_occurrences
 
     if not settings.reminder_calls_enabled:
         return
     db = SessionLocal()
     try:
         now_utc = datetime.now(timezone.utc)
+        generate_due_occurrences(db, now_utc=now_utc)
         due_reminders = get_retry_due_reminders(db, now_utc)
         for reminder in due_reminders:
             user = db.query(User).filter(User.id == reminder.user_id).first()

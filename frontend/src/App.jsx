@@ -9,6 +9,8 @@ import SettingsPage from "./pages/SettingsPage";
 import EmailInboxPage from "./pages/EmailInboxPage";
 import EmailSummariesPage from "./pages/EmailSummariesPage";
 import MailSummaryCallsPage from "./pages/MailSummaryCallsPage";
+import RemindersPage from "./pages/RemindersPage";
+import RecurringRemindersPage from "./pages/RecurringRemindersPage";
 
 export default function App() {
   return (
@@ -22,6 +24,8 @@ export default function App() {
             <Route path="inbox" element={<EmailInboxPage />} />
             <Route path="summaries" element={<EmailSummariesPage />} />
             <Route path="mail-calls" element={<MailSummaryCallsPage />} />
+            <Route path="reminders" element={<RemindersPage />} />
+            <Route path="recurring-reminders" element={<RecurringRemindersPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Route>

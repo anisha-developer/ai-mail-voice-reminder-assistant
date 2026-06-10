@@ -129,12 +129,12 @@ def _script_for_summaries(summaries: list[EmailSummary]) -> str:
     return "\n".join(parts).strip()
 
 
-def prepare_mail_summary_call(db: Session, user: User) -> dict[str, object]:
+def prepare_mail_summary_call(db: Session, user: User, include_delivered: bool = False) -> dict[str, object]:
     counts = get_mail_call_count_today(db, user)
     if counts["used_calls_today"] >= MAX_MAIL_SUMMARY_CALLS_PER_DAY:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Daily mail summary call limit reached")
 
-    pending_summaries = list_pending_today_summaries(db, user)
+    pending_summaries = list_todays_summaries(db, user) if include_delivered else list_pending_today_summaries(db, user)
     if not pending_summaries:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No emails received today.")
 
@@ -145,7 +145,7 @@ def prepare_mail_summary_call(db: Session, user: User) -> dict[str, object]:
         call_type="mail_summary",
         call_status="prepared",
         call_date=local_now.date(),
-        call_time=local_now.time().replace(microsecond=0),
+        call_time=local_now.time().replace(second=0, microsecond=0),
         summary_count=len(pending_summaries),
         script_text=_script_for_summaries(pending_summaries),
         delivery_status="pending",

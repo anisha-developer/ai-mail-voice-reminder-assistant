@@ -11,6 +11,7 @@ class Reminder(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    recurring_rule_id: Mapped[int | None] = mapped_column(ForeignKey("recurring_reminder_rules.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     reminder_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
@@ -31,3 +32,4 @@ class Reminder(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"), nullable=False)
 
     user = relationship("User", back_populates="reminders")
+    recurring_rule = relationship("RecurringReminderRule", back_populates="reminders")

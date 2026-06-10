@@ -10,6 +10,11 @@ body,
 
 body {
   @apply bg-white text-slate-900 antialiased;
+  overflow-x: hidden;
+}
+
+* {
+  min-width: 0;
 }
 
 ::selection {

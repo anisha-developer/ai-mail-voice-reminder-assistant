@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
+from app.services.call_preferences_service import run_due_mail_summary_calls
 from app.services.auto_email_sync_service import run_auto_email_sync_once
 from app.services.reminder_service import run_due_reminder_calls
 
@@ -39,6 +40,14 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    _scheduler.add_job(
+        run_due_mail_summary_calls,
+        trigger=IntervalTrigger(minutes=1),
+        id="scheduled-mail-summary-calls",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     if settings.reminder_calls_enabled:
         _scheduler.add_job(
             run_due_reminder_calls,
@@ -50,9 +59,10 @@ def start_scheduler() -> None:
         )
     _scheduler.start()
     logger.warning(
-        "Scheduler started auto_email_sync_enabled=%s reminder_calls_enabled=%s",
+        "Scheduler started auto_email_sync_enabled=%s reminder_calls_enabled=%s scheduled_mail_summary_calls=%s",
         settings.auto_email_sync_enabled,
         settings.reminder_calls_enabled,
+        True,
     )
     if settings.reminder_calls_enabled:
         logger.warning("Reminder call scheduler started interval_seconds=%s enabled=%s", settings.reminder_check_interval_seconds, settings.reminder_calls_enabled)
