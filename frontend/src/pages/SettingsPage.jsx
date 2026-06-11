@@ -4,14 +4,42 @@ import PageShell from "../components/PageShell";
 import { apiRequest, callPreferencesApi } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
+function to12HourTime(value) {
+  if (!value) return "";
+  const [hoursRaw, minutesRaw] = String(value).split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return "";
+  const period = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = hours % 12 || 12;
+  return `${String(normalizedHour).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+
+function from12HourTime(hour, minute, period) {
+  const hourNum = Number(hour);
+  const minuteNum = Number(minute);
+  if (Number.isNaN(hourNum) || Number.isNaN(minuteNum)) return "";
+  let normalizedHour = hourNum % 12;
+  if (period === "PM") normalizedHour += 12;
+  return `${String(normalizedHour).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+}
+
+function buildTimePickerState(value) {
+  const [hoursRaw = "09", minutesRaw = "00"] = String(value || "09:00").split(":");
+  const hours24 = Number(hoursRaw);
+  const hour12 = hours24 % 12 || 12;
+  return {
+    hour: String(hour12).padStart(2, "0"),
+    minute: String(Number(minutesRaw) || 0).padStart(2, "0"),
+    period: hours24 >= 12 ? "PM" : "AM",
+  };
+}
+
 export default function SettingsPage() {
   const [searchParams] = useSearchParams();
-  const { user, setUser } = useAuth();
+  const { setUser } = useAuth();
   const [form, setForm] = useState({
     name: "",
-    phone_number: "",
-    timezone: "",
-    preferred_language: "",
   });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -47,9 +75,6 @@ export default function SettingsPage() {
         const profile = await apiRequest("/users/me");
         setForm({
           name: profile.name || "",
-          phone_number: profile.phone_number || "",
-          timezone: profile.timezone || "",
-          preferred_language: profile.preferred_language || "",
         });
         setUser(profile);
       } catch (err) {
@@ -74,7 +99,8 @@ export default function SettingsPage() {
         const status = await apiRequest("/gmail/status");
         setGmailStatus(status);
       } catch (err) {
-        setGmailError(err.message);
+        console.error("Failed to load Gmail status", err);
+        setGmailError("Could not refresh Gmail status. Please try again.");
       }
     };
 
@@ -101,7 +127,7 @@ export default function SettingsPage() {
     try {
       const updated = await apiRequest("/users/me", {
         method: "PUT",
-        body: JSON.stringify(form),
+        body: JSON.stringify({ name: form.name }),
       });
       setUser(updated);
       setMessage("Profile updated successfully.");
@@ -142,8 +168,10 @@ export default function SettingsPage() {
     try {
       const status = await apiRequest("/gmail/status");
       setGmailStatus(status);
+      setGmailError("");
     } catch (err) {
-      setGmailError(err.message);
+      console.error("Failed to refresh Gmail status", err);
+      setGmailError("Could not refresh Gmail status. Please try again.");
     }
   };
 
@@ -174,29 +202,24 @@ export default function SettingsPage() {
     }
   };
 
+  const timePickers = {
+    call_slot_1_time: buildTimePickerState(callPrefs.call_slot_1_time),
+    call_slot_2_time: buildTimePickerState(callPrefs.call_slot_2_time),
+    call_slot_3_time: buildTimePickerState(callPrefs.call_slot_3_time),
+  };
+
   return (
     <PageShell
       title="Settings"
-      description="Update your profile details and profile defaults."
+      description="Update your preferences."
     >
       <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
-        <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-slate-600">
-          Signed in as <span className="font-medium text-slate-900">{user?.email}</span>
-        </div>
-        {[
-          ["name", "Full name"],
-          ["phone_number", "Phone number"],
-          ["timezone", "Timezone"],
-          ["preferred_language", "Preferred language"],
-        ].map(([key, label]) => (
-          <input
-            key={key}
-            value={form[key]}
-            onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-            placeholder={label}
-            className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
-          />
-        ))}
+        <input
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder="Full name"
+          className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
+        />
         <div className="md:col-span-2 space-y-3">
           {message ? <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{message}</p> : null}
           {error ? <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{error}</p> : null}
@@ -267,19 +290,8 @@ export default function SettingsPage() {
               Email summary calls only happen at these times if there are new pending emails. Reminder calls do not affect this limit.
             </p>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            <p>Next call: {callPrefs.next_slot_time ? `${callPrefs.next_slot_time} (${callPrefs.next_slot_label || "slot"})` : "No enabled slots"}</p>
-            <p>Pending new summaries: {callPrefs.pending_new_email_summaries ?? 0}</p>
-            <p>Status: {callPrefs.next_scheduled_summary_call_status || "Unknown"}</p>
-          </div>
         </div>
         <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleSaveCallPreferences}>
-          <input
-            value={callPrefs.timezone}
-            onChange={(e) => setCallPrefs({ ...callPrefs, timezone: e.target.value })}
-            placeholder="Timezone"
-            className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
-          />
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             Minimum new emails required to call
             <select
@@ -314,12 +326,57 @@ export default function SettingsPage() {
                   Enabled
                 </label>
               </div>
-              <input
-                type="time"
-                value={callPrefs[timeKey]}
-                onChange={(e) => setCallPrefs({ ...callPrefs, [timeKey]: e.target.value })}
-                className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none"
-              />
+              <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
+                <select
+                  value={timePickers[timeKey].hour}
+                  onChange={(e) =>
+                    setCallPrefs({
+                      ...callPrefs,
+                      [timeKey]: from12HourTime(e.target.value, timePickers[timeKey].minute, timePickers[timeKey].period),
+                    })
+                  }
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none"
+                >
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((hour) => (
+                    <option key={hour} value={String(hour).padStart(2, "0")}>
+                      {String(hour).padStart(2, "0")}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={timePickers[timeKey].minute}
+                  onChange={(e) =>
+                    setCallPrefs({
+                      ...callPrefs,
+                      [timeKey]: from12HourTime(timePickers[timeKey].hour, e.target.value, timePickers[timeKey].period),
+                    })
+                  }
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none"
+                >
+                  {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0")).map((minute) => (
+                    <option key={minute} value={minute}>
+                      {minute}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={timePickers[timeKey].period}
+                  onChange={(e) =>
+                    setCallPrefs({
+                      ...callPrefs,
+                      [timeKey]: from12HourTime(timePickers[timeKey].hour, timePickers[timeKey].minute, e.target.value),
+                    })
+                  }
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none"
+                >
+                  {["AM", "PM"].map((period) => (
+                    <option key={period} value={period}>
+                      {period}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Current value: {to12HourTime(callPrefs[timeKey])} IST</p>
             </div>
           ))}
           <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">

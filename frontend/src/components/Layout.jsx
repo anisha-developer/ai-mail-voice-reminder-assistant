@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { APP_NAME } from "../constants/app";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -39,6 +40,10 @@ export default function Layout() {
   );
 
   useEffect(() => {
+    document.title = APP_NAME;
+  }, []);
+
+  useEffect(() => {
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
     fetch(`${baseUrl}/health`)
       .then((response) => response.json())
@@ -71,7 +76,9 @@ export default function Layout() {
             Menu
           </button>
           <div className="min-w-0 text-right">
-            <p className="truncate text-xs uppercase tracking-[0.3em] text-slate-500">AI Mail Assistant</p>
+            <p className="max-w-[14rem] whitespace-normal text-right text-sm leading-4 font-medium text-slate-500">
+              {APP_NAME}
+            </p>
           </div>
         </div>
         <aside
@@ -81,7 +88,9 @@ export default function Layout() {
         >
           <div className="mb-6 flex items-start justify-between gap-3">
             <div className={`min-w-0 ${isCollapsed ? "lg:hidden" : ""}`}>
-              <p className="text-xs uppercase tracking-[0.35em] text-slate-500">AI Mail Assistant</p>
+              <p className="max-w-[11rem] whitespace-normal text-sm leading-5 font-medium text-slate-500">
+                {APP_NAME}
+              </p>
               <h1 className="mt-3 break-words text-2xl font-semibold text-slate-900">
                 Welcome{user?.name ? `, ${user.name}` : ""}
               </h1>

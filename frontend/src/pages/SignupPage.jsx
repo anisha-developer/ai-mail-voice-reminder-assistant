@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import { apiRequest } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { APP_NAME } from "../constants/app";
 
 const initialForm = {
   name: "",
@@ -18,6 +20,10 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  useEffect(() => {
+    document.title = APP_NAME;
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -40,7 +46,8 @@ export default function SignupPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,_#ffffff_0%,_#f8fafc_100%)] px-4 py-10">
       <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Create Account</p>
+        <p className="max-w-full break-words text-sm font-medium leading-5 text-slate-500">{APP_NAME}</p>
+        <p className="mt-3 text-xs uppercase tracking-[0.35em] text-slate-400">Create Account</p>
         <h1 className="mt-3 text-3xl font-semibold text-slate-900">Sign up</h1>
         <p className="mt-2 text-sm text-slate-600">Create your workspace and profile.</p>
         <form className="mt-8 grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import { apiRequest } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { APP_NAME } from "../constants/app";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -10,6 +12,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  useEffect(() => {
+    document.title = APP_NAME;
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -32,7 +38,8 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,_#ffffff_0%,_#f8fafc_100%)] px-4">
       <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Authentication</p>
+        <p className="max-w-full break-words text-sm font-medium leading-5 text-slate-500">{APP_NAME}</p>
+        <p className="mt-3 text-xs uppercase tracking-[0.35em] text-slate-400">Authentication</p>
         <h1 className="mt-3 text-3xl font-semibold text-slate-900">Sign in</h1>
         <p className="mt-2 text-sm text-slate-600">Access your dashboard and profile.</p>
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>

@@ -221,6 +221,11 @@ export default function RemindersPage() {
 
   const oneTimeCount = useMemo(() => oneTimeReminders.length, [oneTimeReminders]);
 
+  const canCallAgain = (status) => ["missed", "failed", "retry_scheduled", "snoozed"].includes(status);
+  const canSnooze = (status) => ["scheduled", "retry_scheduled", "snoozed", "calling", "missed", "failed"].includes(status);
+  const canMarkDone = (status) => !["completed", "cancelled"].includes(status);
+  const canCancel = (status) => !["completed", "cancelled"].includes(status);
+
   return (
     <PageShell
       title="Reminders"
@@ -255,12 +260,6 @@ export default function RemindersPage() {
         <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
           <Field label="Reminder title">
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Drink water" required />
-          </Field>
-          <Field label="Timezone">
-            <div className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-slate-900">
-              <p className="text-sm font-medium text-slate-900">Indian Standard Time (IST) UTC+5:30</p>
-              <p className="mt-1 text-xs text-slate-500">Stored internally as Asia/Kolkata.</p>
-            </div>
           </Field>
           <div className="md:col-span-2">
             <Field label="Notes">
@@ -416,9 +415,6 @@ export default function RemindersPage() {
             <button type="submit" disabled={loading} className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white disabled:opacity-60">
               {loading ? "Saving..." : form.reminder_type === "one_time" ? "Save reminder" : "Save recurring reminder"}
             </button>
-            <button type="button" onClick={resetForm} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-700">
-              Reset
-            </button>
           </div>
         </form>
       </SectionCard>
@@ -447,26 +443,25 @@ export default function RemindersPage() {
                     <p className="break-words text-sm text-slate-600">{reminder.notes || "No notes provided."}</p>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                       <span className="break-words">When: {formatISTDateTime(reminder.reminder_at)}</span>
-                      <span className="break-words">Timezone: {reminder.timezone}</span>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {reminder.status === "scheduled" || reminder.status === "retry_scheduled" || reminder.status === "snoozed" ? (
+                    {canCallAgain(reminder.status) ? (
                       <button type="button" onClick={() => handleReminderAction(reminder.id, "call-again")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
                         Call again
                       </button>
                     ) : null}
-                    {reminder.status !== "completed" ? (
+                    {canSnooze(reminder.status) ? (
                       <button type="button" onClick={() => handleReminderAction(reminder.id, "snooze")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
                         Snooze 10 minutes
                       </button>
                     ) : null}
-                    {reminder.status !== "completed" ? (
+                    {canMarkDone(reminder.status) ? (
                       <button type="button" onClick={() => handleReminderAction(reminder.id, "mark-done")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
                         Mark done
                       </button>
                     ) : null}
-                    {reminder.status !== "cancelled" ? (
+                    {canCancel(reminder.status) ? (
                       <button type="button" onClick={() => handleReminderAction(reminder.id, "cancel")} className="rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-slate-700">
                         Cancel
                       </button>
@@ -501,7 +496,6 @@ export default function RemindersPage() {
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                       <span className="break-words">Type: {rule.repeat_type}</span>
                       <span className="break-words">Time: {to12HourTime(rule.time_of_day)}</span>
-                      <span className="break-words">Timezone: {rule.timezone}</span>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">

@@ -31,14 +31,14 @@ function StatusBadge({ children, tone = "neutral" }) {
   return <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${STATUS_STYLES[tone] || STATUS_STYLES.neutral}`}>{children}</span>;
 }
 
-function MetricCard({ label, value, hint, status, truncateValue = false }) {
+function MetricCard({ label, value, hint, status, truncateValue = false, title }) {
   return (
     <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-sm text-slate-400">{label}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <h3
           className={`min-w-0 text-xl font-semibold leading-tight text-slate-900 ${truncateValue ? "truncate whitespace-nowrap overflow-hidden" : "break-normal"}`}
-          title={typeof value === "string" ? value : undefined}
+          title={title || (typeof value === "string" ? value : undefined)}
         >
           {value}
         </h3>
@@ -69,7 +69,7 @@ function CallSlotRow({ label, time, enabled }) {
         <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</p>
         <p className="mt-1 break-words whitespace-normal text-lg font-semibold text-slate-900">{time}</p>
       </div>
-      <StatusBadge tone={enabled ? "success" : "warning"}>{enabled ? "Enabled" : "Disabled"}</StatusBadge>
+      {enabled ? null : <span className="text-xs font-medium text-slate-400">Disabled</span>}
     </div>
   );
 }
@@ -109,19 +109,168 @@ function formatISTTime(value) {
     .replace(/\bpm\b/g, "PM");
 }
 
+function normalizeStatusLabel(value) {
+  if (!value) return "";
+  return String(value).replaceAll("_", " ").trim().toLowerCase();
+}
+
+function titleCaseStatus(value) {
+  const normalized = normalizeStatusLabel(value);
+  if (!normalized) return "";
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getLatestMailSummaryCallStatus(call) {
+  if (!call) return "No recent call status";
+
+  const callStatus = normalizeStatusLabel(call.call_status);
+  const deliveryStatus = normalizeStatusLabel(call.delivery_status);
+
+  if (!callStatus && !deliveryStatus) {
+    return "No recent call status";
+  }
+
+  if (callStatus === "failed") {
+    return "Call failed";
+  }
+
+  if (deliveryStatus === "failed") {
+    return "Delivery failed";
+  }
+
+  if (deliveryStatus === "delivered" || callStatus === "delivered" || callStatus === "completed") {
+    return "Delivered";
+  }
+
+  const pendingStates = new Set(["prepared", "queued", "calling", "initiated", "ringing", "in progress", "enabled", "pending"]);
+  if (pendingStates.has(callStatus) || pendingStates.has(deliveryStatus)) {
+    if (callStatus === "completed" && deliveryStatus === "pending") {
+      return "Call completed, delivery pending";
+    }
+    if (callStatus === "pending" && deliveryStatus === "delivered") {
+      return "Call pending, delivery delivered";
+    }
+    if (callStatus && deliveryStatus && callStatus !== deliveryStatus) {
+      return `Call ${titleCaseStatus(callStatus)}, delivery ${titleCaseStatus(deliveryStatus).toLowerCase()}`;
+    }
+    return titleCaseStatus(callStatus || deliveryStatus || "pending");
+  }
+
+  if (callStatus && deliveryStatus && callStatus !== deliveryStatus) {
+    return `Call ${titleCaseStatus(callStatus)}, delivery ${titleCaseStatus(deliveryStatus).toLowerCase()}`;
+  }
+
+  return titleCaseStatus(callStatus || deliveryStatus || "pending") || "No recent call status";
+}
+
+function formatScheduleTime(value) {
+  if (!value) return "-";
+  return formatISTTime(`1970-01-01T${value}:00`);
+}
+
+function parseSummaryCallMoment(callDate, callTime) {
+  if (!callDate || !callTime) return null;
+  const parsed = Date.parse(`${String(callDate)}T${String(callTime).slice(0, 8)}`);
+  if (!Number.isNaN(parsed)) return new Date(parsed);
+  return null;
+}
+
+function getSummaryCallStatus(call) {
+  if (!call) return "Pending";
+
+  const callStatus = normalizeStatusLabel(call.call_status);
+  const deliveryStatus = normalizeStatusLabel(call.delivery_status);
+
+  if (deliveryStatus === "delivered" || callStatus === "delivered" || callStatus === "completed") {
+    return "Delivered";
+  }
+
+  if (["failed", "missed", "cancelled"].includes(callStatus)) {
+    return titleCaseStatus(callStatus);
+  }
+
+  if (["prepared", "queued", "calling", "initiated", "ringing", "in progress", "pending"].includes(callStatus)) {
+    return "Pending";
+  }
+
+  return callStatus ? titleCaseStatus(callStatus) : "Pending";
+}
+
+function buildSummaryCallSlots(callPreferences, mailCallHistory, todayDate) {
+  const slotDefinitions = [
+    { slotNumber: 1, label: "Call 1", time: callPreferences.call_slot_1_time, enabled: callPreferences.call_slot_1_enabled },
+    { slotNumber: 2, label: "Call 2", time: callPreferences.call_slot_2_time, enabled: callPreferences.call_slot_2_enabled },
+    { slotNumber: 3, label: "Call 3", time: callPreferences.call_slot_3_time, enabled: callPreferences.call_slot_3_enabled },
+  ];
+
+  const todayCalls = (Array.isArray(mailCallHistory) ? mailCallHistory : [])
+    .filter((item) => !todayDate || String(item.call_date) === String(todayDate))
+    .slice()
+    .sort((left, right) => new Date(left.updated_at || left.created_at || 0) - new Date(right.updated_at || right.created_at || 0));
+
+  const slots = slotDefinitions.map((slot) => {
+    const historyItem = todayCalls.find((item) => String(item.call_time || "").slice(0, 5) === String(slot.time || "").slice(0, 5));
+    const status = slot.enabled ? getSummaryCallStatus(historyItem) : "Disabled";
+    const moment = parseSummaryCallMoment(todayDate, slot.time);
+    const delivered = status === "Delivered";
+    return {
+      ...slot,
+      status,
+      moment,
+      delivered,
+      displayTime: formatScheduleTime(slot.time),
+    };
+  });
+
+  const nextSlot = slots.find((slot) => slot.enabled && !slot.delivered) || null;
+  const enabledSlots = slots.filter((slot) => slot.enabled);
+  const deliveredSlots = enabledSlots.filter((slot) => slot.delivered);
+  const pendingSlots = enabledSlots.filter((slot) => !slot.delivered);
+
+  return {
+    slots,
+    nextSlot,
+    enabledSlots,
+    deliveredSlots,
+    pendingSlots,
+    completedToday: enabledSlots.length > 0 && pendingSlots.length === 0,
+  };
+}
+
+function formatSummaryUpdateResult(successCount, failedCount) {
+  const success = Number(successCount) || 0;
+  const failed = Number(failedCount) || 0;
+
+  const successLabel = success === 1 ? "1 email summarized successfully" : success > 1 ? `${success} emails summarized successfully` : "";
+  const failureLabel = failed === 1 ? "1 summary failed" : failed > 1 ? `${failed} summaries failed` : "";
+
+  if (success && failed) {
+    return `${success === 1 ? "1 email" : `${success} emails`} summarized, ${failureLabel}`;
+  }
+
+  if (success) return successLabel;
+  if (failed) return failureLabel;
+  return "No new summaries generated";
+}
+
 function describeRecurringRule(rule) {
   if (!rule) return "Unknown";
-  if (rule.repeat_type === "daily") return `Daily at ${rule.time_of_day || "-"}`;
-  if (rule.repeat_type === "weekdays") return `Weekdays at ${rule.time_of_day || "-"}`;
+  const formattedTime = formatScheduleTime(rule.time_of_day);
+  if (rule.repeat_type === "daily") return `Daily at ${formattedTime}`;
+  if (rule.repeat_type === "weekdays") return `Weekdays at ${formattedTime}`;
   if (rule.repeat_type === "weekly") {
     const days = Array.isArray(rule.days_of_week) ? rule.days_of_week.join(", ") : "-";
-    return `Weekly on ${days} at ${rule.time_of_day || "-"}`;
+    return `Weekly on ${days} at ${formattedTime}`;
   }
   if (rule.repeat_type === "custom_days") {
     const days = Array.isArray(rule.days_of_week) ? rule.days_of_week.join(", ") : "-";
-    return `Custom days (${days}) at ${rule.time_of_day || "-"}`;
+    return `Custom days (${days}) at ${formattedTime}`;
   }
-  if (rule.repeat_type === "monthly") return `Monthly on day ${rule.day_of_month || "-"} at ${rule.time_of_day || "-"}`;
+  if (rule.repeat_type === "monthly") return `Monthly on day ${rule.day_of_month || "-"} at ${formattedTime}`;
   if (rule.repeat_type === "custom_interval") return `Every ${rule.interval_value || "-"} ${rule.interval_unit || "unit"}`;
   return rule.repeat_type || "Unknown";
 }
@@ -134,21 +283,61 @@ function getReminderTone(reminder) {
   return "neutral";
 }
 
+function getReminderUpcomingMoment(reminder) {
+  if (!reminder) return null;
+
+  const preferredValue =
+    reminder.status === "retry_scheduled"
+      ? reminder.next_retry_at || reminder.reminder_at
+      : reminder.status === "snoozed"
+        ? reminder.snoozed_until || reminder.next_retry_at || reminder.reminder_at
+        : reminder.reminder_at || reminder.next_retry_at || reminder.snoozed_until || reminder.next_occurrence_at;
+
+  if (!preferredValue) return null;
+
+  const moment = new Date(preferredValue);
+  return Number.isNaN(moment.getTime()) ? null : moment;
+}
+
+function cleanDisplayTitle(value) {
+  if (!value) return "Untitled";
+  return String(value)
+    .replace(/\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "")
+    .replace(/\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4,}$/i, "")
+    .replace(/\s+[0-9a-f]{6,}$/i, "")
+    .trim() || "Untitled";
+}
+
+function getNextUpcomingReminder(remindersList) {
+  const now = Date.now();
+  const excludedStatuses = new Set(["completed", "missed", "failed", "cancelled", "inactive"]);
+
+  return (
+    remindersList
+      .map((reminder) => {
+        const moment = getReminderUpcomingMoment(reminder);
+        return { reminder, moment };
+      })
+      .filter(({ reminder, moment }) => moment && moment.getTime() > now && !excludedStatuses.has(reminder?.status))
+      .sort((left, right) => left.moment.getTime() - right.moment.getTime())[0]?.reminder || null
+  );
+}
+
 function buildRecentActivity({ sync, autoSync, mailCallHistory, reminders, recentReplies, todaySummaryCount }) {
   const activity = [];
 
   if (sync?.last_sync_time) {
     activity.push({
       label: "Gmail sync completed",
-      detail: `${sync.total_emails_stored || 0} emails stored so far.`,
+      detail: `${sync.total_emails_stored || 0} synced inbox emails so far.`,
       at: sync.last_sync_time,
     });
   }
 
   if (autoSync?.last_auto_summary_at) {
     activity.push({
-      label: "Auto-summary run",
-      detail: `Success: ${autoSync.last_auto_summary_success_count || 0}, failed: ${autoSync.last_auto_summary_failed_count || 0}.`,
+      label: "Email summaries updated",
+      detail: formatSummaryUpdateResult(autoSync.last_auto_summary_success_count, autoSync.last_auto_summary_failed_count),
       at: autoSync.last_auto_summary_at,
     });
   } else if (todaySummaryCount) {
@@ -163,7 +352,7 @@ function buildRecentActivity({ sync, autoSync, mailCallHistory, reminders, recen
     const latest = mailCallHistory[0];
     activity.push({
       label: "Latest mail-summary call",
-      detail: `${latest.call_status} / ${latest.delivery_status}${latest.provider_status ? ` / ${latest.provider_status}` : ""}.`,
+      detail: `${getLatestMailSummaryCallStatus(latest)}.`,
       at: latest.updated_at || latest.created_at,
     });
   }
@@ -200,7 +389,7 @@ export default function DashboardPage() {
   const [syncStatus, setSyncStatus] = useState({ last_sync_time: null, total_emails_stored: 0, gmail_connected: false });
   const [gmailStatus, setGmailStatus] = useState({ is_connected: false, gmail_email: null, connected_at: null, can_send_replies: false });
   const [summaryStats, setSummaryStats] = useState({ total: 0, unsummarized: 0, today: 0 });
-  const [mailCallStats, setMailCallStats] = useState({ used: 0, remaining: 3, pending: 0, lastCall: null, todaySummaries: 0 });
+  const [mailCallStats, setMailCallStats] = useState({ used: 0, remaining: 3, pending: 0, lastCall: null, todaySummaries: 0, date: null });
   const [callPreferences, setCallPreferences] = useState({
     timezone: "Asia/Kolkata",
     call_slot_1_time: "09:00",
@@ -235,19 +424,19 @@ export default function DashboardPage() {
   const [recurringRules, setRecurringRules] = useState([]);
   const [recentReplies, setRecentReplies] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
+  const [mailCallHistory, setMailCallHistory] = useState([]);
 
   const recoveryStatuses = useMemo(() => new Set(["retry_scheduled", "missed", "snoozed", "failed"]), []);
 
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [sync, gmail, autoSync, summaries, todaySummaries, emails, counts, pending, history, remindersData, repliesData, prefs, recurringData] =
+      const [sync, gmail, autoSync, summaries, emails, counts, pending, history, remindersData, repliesData, prefs, recurringData] =
         await Promise.all([
           emailApi.getSyncStatus(),
           gmailApi.getStatus().catch(() => ({ is_connected: false, gmail_email: null, connected_at: null, can_send_replies: false })),
           emailApi.getAutoSyncStatus(),
           summaryApi.getAllSummaries(),
-          summaryApi.getTodaySummaries(),
           emailApi.getAllEmails(),
           mailCallApi.getCountToday(),
           mailCallApi.getPendingSummaries(),
@@ -264,19 +453,21 @@ export default function DashboardPage() {
       setSummaryStats({
         total: summaries.length,
         unsummarized: emails.filter((email) => !email.is_summarized).length,
-        today: todaySummaries.length,
+        today: counts.today_summaries_count,
       });
       setMailCallStats({
         used: counts.used_calls_today,
         remaining: counts.remaining_calls_today,
         pending: pending.pending_count,
         lastCall: history[0] || null,
-        todaySummaries: todaySummaries.length,
+        todaySummaries: counts.today_summaries_count,
+        date: counts.date || null,
       });
       setReminders(remindersData.value || []);
       setRecurringRules(recurringData.value || []);
       setRecentReplies(repliesData.value || []);
       setCallPreferences(prefs);
+      setMailCallHistory(history);
       setRecentActivity(
         buildRecentActivity({
           sync,
@@ -285,7 +476,7 @@ export default function DashboardPage() {
           reminders: remindersData.value || [],
           recurringRules: recurringData.value || [],
           recentReplies: repliesData.value || [],
-          todaySummaryCount: todaySummaries.length,
+          todaySummaryCount: counts.today_summaries_count,
         }),
       );
     } catch {
@@ -299,87 +490,94 @@ export default function DashboardPage() {
     loadDashboard();
   }, []);
 
+  const summaryCallPreview = useMemo(
+    () => buildSummaryCallSlots(callPreferences, mailCallHistory, mailCallStats.date),
+    [callPreferences, mailCallHistory, mailCallStats.date],
+  );
+
   const callPreferencesPreview = useMemo(() => {
-    const slots = [
-      { label: "Call 1", time: callPreferences.call_slot_1_time, enabled: callPreferences.call_slot_1_enabled },
-      { label: "Call 2", time: callPreferences.call_slot_2_time, enabled: callPreferences.call_slot_2_enabled },
-      { label: "Call 3", time: callPreferences.call_slot_3_time, enabled: callPreferences.call_slot_3_enabled },
-    ].filter((slot) => slot.enabled);
+    const nextSlot = summaryCallPreview.nextSlot;
+    const pending = callPreferences.pending_new_email_summaries ?? 0;
+    const deliveredCount = summaryCallPreview.deliveredSlots.length;
+    const pendingCount = summaryCallPreview.pendingSlots.length;
+
     return {
-      nextSlot: slots[0] || null,
-      status: callPreferences.next_scheduled_summary_call_status,
-      pending: callPreferences.pending_new_email_summaries ?? 0,
-      wouldCall: callPreferences.would_call_next_slot,
+      nextSlot,
+      pending,
+      completedToday: summaryCallPreview.completedToday,
+      deliveredCount,
+      pendingCount,
+      nextCallLabel: summaryCallPreview.completedToday
+        ? "All summary calls completed today"
+        : pending === 0
+          ? "No pending summaries for the next call"
+          : nextSlot
+            ? `${nextSlot.label} at ${formatScheduleTime(nextSlot.time)}`
+            : "No scheduled call",
+      summaryProgressLabel:
+        deliveredCount || pendingCount
+          ? `${deliveredCount} delivered, ${pendingCount} pending today`
+          : "No summary call activity yet today",
     };
-  }, [callPreferences]);
+  }, [callPreferences, summaryCallPreview]);
+
+  const nextUpcomingReminder = useMemo(() => getNextUpcomingReminder(reminders), [reminders]);
 
   return (
     <PageShell
       title="Dashboard"
-      description="A compact command center for Gmail status, summaries, voice mail calls, reminders, recurring reminders, and system health."
+      description="A compact overview of Gmail sync, email summaries, voice calls, and reminders."
     >
       <div className="grid gap-4">
         <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
           <h3 className="break-words text-2xl font-semibold text-slate-900">{user?.name || user?.email || "User"}</h3>
           <p className="mt-2 max-w-3xl break-words text-sm text-slate-700">
-            This dashboard surfaces the essentials. The detailed workflows live on their dedicated pages so the layout stays compact and readable.
+            Here is a quick overview of your email summaries, Gmail sync, calls, and reminders.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <StatusBadge tone={gmailStatus.is_connected ? "success" : "warning"}>{gmailStatus.is_connected ? "Gmail connected" : "Gmail disconnected"}</StatusBadge>
-            <StatusBadge tone={autoSyncStatus.auto_sync_enabled ? "success" : "warning"}>Auto sync {autoSyncStatus.auto_sync_enabled ? "on" : "off"}</StatusBadge>
-            <StatusBadge tone={autoSyncStatus.auto_summarize_after_sync ? "success" : "warning"}>Auto summary {autoSyncStatus.auto_summarize_after_sync ? "on" : "off"}</StatusBadge>
+            <StatusBadge tone={autoSyncStatus.auto_sync_enabled ? "success" : "warning"}>Email sync {autoSyncStatus.auto_sync_enabled ? "enabled" : "disabled"}</StatusBadge>
+            <StatusBadge tone={autoSyncStatus.auto_summarize_after_sync ? "success" : "warning"}>Automatic summaries {autoSyncStatus.auto_summarize_after_sync ? "enabled" : "disabled"}</StatusBadge>
           </div>
         </div>
       </div>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Gmail connection" value={gmailStatus.is_connected ? "Connected" : "Disconnected"} status={{ tone: gmailStatus.is_connected ? "success" : "warning", label: gmailStatus.is_connected ? "Live" : "Needs setup" }} hint={gmailStatus.gmail_email || "No Gmail account connected yet."} />
-        <MetricCard label="Emails stored" value={syncStatus.total_emails_stored} hint={syncStatus.last_sync_time ? `Last sync: ${formatDateTime(syncStatus.last_sync_time)}` : "Not synced yet."} />
-        <MetricCard label="Summaries today" value={summaryStats.today} hint={`Unsummarized: ${autoSyncStatus.unsummarized_email_count ?? summaryStats.unsummarized}`} />
-        <MetricCard label="Mail-summary quota" value={`${mailCallStats.used}/${mailCallStats.remaining + mailCallStats.used}`} hint="Reminder calls do not affect this limit." />
+        <MetricCard label="Synced inbox emails" value={syncStatus.total_emails_stored} hint={syncStatus.last_sync_time ? `Last sync: ${formatDateTime(syncStatus.last_sync_time)}` : "Not synced yet."} />
+        <MetricCard label="Summaries today" value={summaryStats.today} hint={`Emails waiting for summary: ${autoSyncStatus.unsummarized_email_count ?? summaryStats.unsummarized}`} />
+        <MetricCard label="Summary calls used today" value={`${mailCallStats.used} of ${mailCallStats.remaining + mailCallStats.used}`} hint="Reminder calls do not affect this limit." />
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <SectionCard eyebrow="Gmail Connection" title="Connection and sync status" description="Detailed sync actions live on the Email Inbox page." actions={[<Link key="inbox" to="/inbox" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Open Inbox</Link>, <Link key="settings" to="/settings" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Manage Gmail</Link>]}>
+
+        <SectionCard eyebrow="Today’s Email Summary" title="Email Summary Status" description="Your email sync and summary status for today." actions={[<Link key="summaries" to="/summaries" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Open Summaries</Link>]}>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Connection</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">{gmailStatus.is_connected ? "Connected" : "Disconnected"}</p>
-              <p className="mt-1 break-words text-xs text-slate-400">{gmailStatus.gmail_email || "Connect Gmail from Settings to enable reading and voice features."}</p>
+              <p className="text-sm text-slate-400">Email sync</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_sync_enabled ? "Enabled" : "Disabled"}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm text-slate-400">Automatic summaries</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_summarize_after_sync ? "Enabled" : "Disabled"}</p>
+              <p className="mt-1 text-xs text-slate-400">Emails waiting for summary: {autoSyncStatus.unsummarized_email_count ?? summaryStats.unsummarized}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Last sync</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(syncStatus.last_sync_time)}</p>
-            </div>
-          </div>
-          {gmailStatus.is_connected && !gmailStatus.can_send_replies ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              Gmail is connected, but reply permission is missing. Reconnect Gmail if you want voice replies enabled.
-            </div>
-          ) : null}
-        </SectionCard>
-
-        <SectionCard eyebrow="Today’s Email Summary" title="Summary readiness and automation" description="This section is status-focused; generation controls live on the summaries page." actions={[<Link key="summaries" to="/summaries" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Open Summaries</Link>]}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Auto sync</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_sync_enabled ? "Enabled" : "Disabled"}</p>
-              <p className="mt-1 text-xs text-slate-400">Interval: {autoSyncStatus.interval_minutes} minute(s)</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Auto summarize after sync</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">{autoSyncStatus.auto_summarize_after_sync ? "Enabled" : "Disabled"}</p>
-              <p className="mt-1 text-xs text-slate-400">Unsummarized: {autoSyncStatus.unsummarized_email_count ?? summaryStats.unsummarized}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Last auto sync</p>
               <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(autoSyncStatus.last_auto_sync_at)}</p>
-              <p className="mt-1 break-words text-xs text-slate-400">Status: {autoSyncStatus.last_auto_sync_status || "—"}</p>
+              <p className="mt-1 break-words text-xs text-slate-400">
+                {autoSyncStatus.last_auto_sync_status === "success" ? "Sync completed" : autoSyncStatus.last_auto_sync_status || "—"}
+              </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Last auto summary</p>
+              <p className="text-sm text-slate-400">Last summary update</p>
               <p className="mt-2 text-lg font-semibold text-slate-900">{formatDateTime(autoSyncStatus.last_auto_summary_at)}</p>
-              <p className="mt-1 text-xs text-slate-400">Success: {autoSyncStatus.last_auto_summary_success_count} | Failed: {autoSyncStatus.last_auto_summary_failed_count}</p>
+              <p className="mt-1 text-xs text-slate-400">
+                {formatSummaryUpdateResult(
+                  autoSyncStatus.last_auto_summary_success_count,
+                  autoSyncStatus.last_auto_summary_failed_count,
+                )}
+              </p>
             </div>
           </div>
           {autoSyncStatus.last_auto_sync_error || autoSyncStatus.last_auto_summary_error ? (
@@ -397,8 +595,8 @@ export default function DashboardPage() {
             <MetricCard label="Today's summaries" value={mailCallStats.todaySummaries || summaryStats.today} hint="Prepared from today's Gmail messages." />
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm text-slate-400">Latest delivery result</p>
-            <p className="mt-2 break-words text-lg font-semibold text-slate-900">{mailCallStats.lastCall ? `${mailCallStats.lastCall.call_status} / ${mailCallStats.lastCall.delivery_status}${mailCallStats.lastCall.provider_status ? ` / ${mailCallStats.lastCall.provider_status}` : ""}` : "No voice delivery yet"}</p>
+            <p className="text-sm text-slate-400">Latest mail summary call</p>
+            <p className="mt-2 break-words text-lg font-semibold text-slate-900">{getLatestMailSummaryCallStatus(mailCallStats.lastCall)}</p>
             <p className="mt-1 text-xs text-slate-400">{mailCallStats.lastCall?.updated_at ? `Updated: ${formatDateTime(mailCallStats.lastCall.updated_at)}` : "Start a call to see provider updates here."}</p>
           </div>
         </SectionCard>
@@ -421,38 +619,17 @@ export default function DashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Summary</p>
               <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                <PreferenceStat
-                  label="Next call slot"
-                  value={
-                    callPreferencesPreview.nextSlot
-                      ? `${callPreferencesPreview.nextSlot.label}: ${formatISTTime(`1970-01-01T${callPreferencesPreview.nextSlot.time}:00`)}`
-                      : "No enabled slots"
-                  }
-                />
+                <PreferenceStat label="Next call" value={callPreferencesPreview.nextCallLabel} />
                 <PreferenceStat label="Pending new summaries" value={String(callPreferencesPreview.pending)} />
-                <PreferenceStat
-                  label="Scheduler status"
-                  value={callPreferencesPreview.status || "Unknown"}
-                  hint={
-                    callPreferencesPreview.wouldCall
-                      ? `Will call because minimum is ${callPreferences.minimum_new_emails_to_call}`
-                      : "Will skip because there are no pending summaries."
-                  }
-                  wide
-                />
-                <PreferenceStat
-                  label="Timezone"
-                  value={callPreferences.timezone || "UTC"}
-                  hint="Controls the summary call slots."
-                />
+                <PreferenceStat label="Summary progress" value={callPreferencesPreview.summaryProgressLabel} wide />
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-400">Call slots</p>
               <div className="mt-3 space-y-3">
-                <CallSlotRow label="Call 1" time={formatISTTime(`1970-01-01T${callPreferences.call_slot_1_time}:00`)} enabled={callPreferences.call_slot_1_enabled} />
-                <CallSlotRow label="Call 2" time={formatISTTime(`1970-01-01T${callPreferences.call_slot_2_time}:00`)} enabled={callPreferences.call_slot_2_enabled} />
-                <CallSlotRow label="Call 3" time={formatISTTime(`1970-01-01T${callPreferences.call_slot_3_time}:00`)} enabled={callPreferences.call_slot_3_enabled} />
+                <CallSlotRow label="Call 1" time={formatScheduleTime(callPreferences.call_slot_1_time)} enabled={callPreferences.call_slot_1_enabled} />
+                <CallSlotRow label="Call 2" time={formatScheduleTime(callPreferences.call_slot_2_time)} enabled={callPreferences.call_slot_2_enabled} />
+                <CallSlotRow label="Call 3" time={formatScheduleTime(callPreferences.call_slot_3_time)} enabled={callPreferences.call_slot_3_enabled} />
               </div>
             </div>
           </div>
@@ -463,30 +640,31 @@ export default function DashboardPage() {
             <MetricCard label="Upcoming reminders" value={reminders.filter((reminder) => reminder.status === "scheduled").length} />
             <MetricCard label="Missed / retry" value={reminders.filter((reminder) => recoveryStatuses.has(reminder.status)).length} />
             <MetricCard label="Completed today" value={reminders.filter((reminder) => reminder.status === "completed").length} />
-            <MetricCard label="Next reminder" value={formatDateTime(reminders[0]?.reminder_at)} />
+            <MetricCard label="Next reminder" value={nextUpcomingReminder ? formatDateTime(getReminderUpcomingMoment(nextUpcomingReminder)) : "No upcoming reminders"} />
           </div>
           <p className="text-sm text-slate-500">Use the dedicated reminders page for full reminder history, retry details, and actions.</p>
         </SectionCard>
 
-        <SectionCard eyebrow="Recurring Reminders" title="Repeat rules and future occurrences" description="Keep this section compact and use the dedicated recurring reminders page for full management." actions={[<Link key="recurring-link" to="/recurring-reminders" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">View recurring reminders</Link>]} compact>
+        <SectionCard eyebrow="Recurring Reminders" title="Recurring Reminders" description="Manage reminders that repeat automatically." actions={[<Link key="recurring-link" to="/recurring-reminders" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">View recurring reminders</Link>]} compact>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="Active rules" value={recurringRules.filter((rule) => rule.status === "active").length} />
-            <MetricCard label="Paused rules" value={recurringRules.filter((rule) => rule.status === "paused").length} />
-            <MetricCard label="Next occurrence" value={formatDateTime(recurringRules[0]?.next_occurrence_at)} />
+            <MetricCard label="Active recurring reminders" value={recurringRules.filter((rule) => rule.status === "active").length} />
+            <MetricCard label="Paused recurring reminders" value={recurringRules.filter((rule) => rule.status === "paused").length} />
+            <MetricCard label="Next scheduled reminder" value={formatDateTime(recurringRules[0]?.next_occurrence_at)} />
             <MetricCard
-              label="Latest summary"
-              value={recurringRules[0]?.title || "None"}
+              label="Latest recurring reminder"
+              value={cleanDisplayTitle(recurringRules[0]?.title) || "None"}
               truncateValue
               hint={recurringRules[0] ? describeRecurringRule(recurringRules[0]) : "No recurring reminders yet."}
+              title={recurringRules[0]?.title || undefined}
             />
           </div>
           <p className="text-sm text-slate-500">Use the dedicated recurring reminders page for full repeat-rule history and actions.</p>
         </SectionCard>
 
-        <SectionCard eyebrow="Missed / Retry Reminders" title="Recovery queue" description="These reminders are scheduled, missed, retrying, or need follow-up." compact>
+        <SectionCard eyebrow="Reminder Follow-ups" title="Reminder Follow-ups" description="Reminders that were missed or need another attempt." compact>
           <div className="grid gap-3 sm:grid-cols-2">
-            <MetricCard label="Recovery items" value={reminders.filter((reminder) => recoveryStatuses.has(reminder.status)).length} />
-            <MetricCard label="Next retry" value={formatDateTime(reminders.filter((reminder) => recoveryStatuses.has(reminder.status))[0]?.next_retry_at)} hint="Detailed retry history lives on the reminders page." />
+            <MetricCard label="Reminders needing attention" value={reminders.filter((reminder) => recoveryStatuses.has(reminder.status)).length} />
+            <MetricCard label="Next retry time" value={formatDateTime(reminders.filter((reminder) => recoveryStatuses.has(reminder.status))[0]?.next_retry_at)} />
           </div>
           <div className="flex justify-end">
             <Link to="/reminders" className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
@@ -495,7 +673,7 @@ export default function DashboardPage() {
           </div>
         </SectionCard>
 
-        <SectionCard eyebrow="Recent Activity" title="Latest meaningful events" description="A compact feed of the most recent dashboard-relevant changes across Gmail, summaries, voice calls, and reminders." compact>
+        <SectionCard eyebrow="Recent Activity" title="Recent Activity" description="A compact feed of the most recent dashboard-relevant changes across Gmail, summaries, voice calls, and reminders." compact>
           <div className="space-y-3">
             {recentActivity.length === 0 ? (
               <p className="text-sm text-slate-400">No recent activity yet.</p>
@@ -522,22 +700,7 @@ export default function DashboardPage() {
           </div>
         </SectionCard>
 
-        <SectionCard eyebrow="System Status" title="Service health and operational notes" description="A quick operational view that helps confirm the app is healthy and ready for live use." compact>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Backend health</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">See sidebar status</p>
-              <p className="mt-1 text-xs text-slate-400">The layout checks /health automatically on load.</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-400">Reminder quota note</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">3 mail-summary calls per day</p>
-              <p className="mt-1 text-xs text-slate-400">Reminder calls are tracked separately and do not reduce this quota.</p>
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard eyebrow="Recent Replies" title="Latest email reply actions" description="This section stays compact so the dashboard focuses on the highest-value operational data." compact>
+        <SectionCard eyebrow="Recent Email Replies" title="Recent Email Replies" description="Recent replies sent from the app." compact>
           <div className="space-y-3">
             {recentReplies.length === 0 ? (
               <p className="text-sm text-slate-400">No email replies yet.</p>
