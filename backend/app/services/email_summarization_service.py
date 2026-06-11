@@ -12,6 +12,7 @@ from app.config import settings
 from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.user import User
+from app.core.timezone import normalize_timezone_name
 
 
 def _clean_text(value: str | None, fallback: str = "") -> str:
@@ -121,7 +122,7 @@ def _generate_summary(email: EmailMessage) -> dict[str, str]:
 
 
 def generate_all_summaries(db: Session, user: User) -> dict[str, int]:
-    emails = db.query(EmailMessage).filter(EmailMessage.user_id == user.id).all()
+    emails = db.query(EmailMessage).filter(EmailMessage.user_id == user.id, EmailMessage.is_in_inbox.is_(True)).all()
     if not emails:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No emails found")
     email_ids = [email.id for email in emails]
@@ -219,7 +220,7 @@ def get_summary(db: Session, user_id: int, summary_id: int) -> EmailSummary:
 
 
 def list_todays_summaries(db: Session, user: User) -> list[EmailSummary]:
-    tz_name = user.timezone or "UTC"
+    tz_name = normalize_timezone_name(user.timezone, "UTC")
     user_tz = ZoneInfo(tz_name)
     start_local = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
     end_local = start_local + timedelta(days=1)
@@ -230,6 +231,8 @@ def list_todays_summaries(db: Session, user: User) -> list[EmailSummary]:
         .join(EmailMessage, EmailMessage.id == EmailSummary.email_message_id)
         .filter(
             EmailSummary.user_id == user.id,
+            EmailSummary.summary_status == "completed",
+            EmailMessage.is_in_inbox.is_(True),
             EmailMessage.received_at >= start_utc,
             EmailMessage.received_at < end_utc,
         )
@@ -264,14 +267,29 @@ def summary_to_detail(summary: EmailSummary) -> dict[str, object]:
 
 
 def get_summary_counts(db: Session, user_id: int) -> dict[str, int]:
+    user = db.query(User).filter(User.id == user_id).first()
+    tz_name = normalize_timezone_name(user.timezone if user else "UTC", "UTC")
+    user_tz = ZoneInfo(tz_name)
+    start_local = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
     total_summaries = db.query(EmailSummary).filter(EmailSummary.user_id == user_id).count()
-    unsummarized_count = db.query(EmailMessage).filter(EmailMessage.user_id == user_id, EmailMessage.is_summarized.is_(False)).count()
-    today = datetime.now(timezone.utc).date()
+    unsummarized_count = (
+        db.query(EmailMessage)
+        .filter(EmailMessage.user_id == user_id, EmailMessage.is_in_inbox.is_(True), EmailMessage.is_summarized.is_(False))
+        .count()
+    )
     generated_today = (
         db.query(EmailSummary)
+        .join(EmailMessage, EmailMessage.id == EmailSummary.email_message_id)
         .filter(
             EmailSummary.user_id == user_id,
-            EmailSummary.created_at >= datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc),
+            EmailSummary.summary_status == "completed",
+            EmailMessage.is_in_inbox.is_(True),
+            EmailMessage.received_at.is_not(None),
+            EmailMessage.received_at >= start_utc,
+            EmailMessage.received_at < end_utc,
         )
         .count()
     )

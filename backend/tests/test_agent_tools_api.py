@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
-from datetime import datetime, time, timezone
+from email import message_from_bytes
+from datetime import datetime, time, timezone, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -198,6 +200,40 @@ def _create_agent_fixture_with_summaries(summary_count: int) -> tuple[int, list[
         db.close()
 
 
+class _RecordingSendResult:
+    def __init__(self, store: dict[str, object], message_id: str = "msg-123") -> None:
+        self._store = store
+        self._message_id = message_id
+
+    def execute(self) -> dict[str, str]:
+        return {"id": self._message_id}
+
+
+class _RecordingMessages:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def send(self, **kwargs):
+        self._store["send_kwargs"] = kwargs
+        return _RecordingSendResult(self._store)
+
+
+class _RecordingUsers:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def messages(self):
+        return _RecordingMessages(self._store)
+
+
+class _RecordingGmailService:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def users(self):
+        return _RecordingUsers(self._store)
+
+
 def test_missing_api_key_returns_401() -> None:
     settings.agent_tool_api_key = AGENT_KEY
     response = client.post("/agent/tools", json={"action": "get_today_summaries", "user_id": 1})
@@ -368,6 +404,7 @@ def test_create_reminder_creates_reminder(monkeypatch) -> None:
             "notes": "Follow up with mentor",
             "reminder_time_text": "tomorrow morning",
             "email_summary_id": summary_id,
+            "transcript": "Remind me tomorrow morning to check project mail",
         },
         headers=_headers(),
     )
@@ -384,7 +421,104 @@ def test_create_reminder_creates_reminder(monkeypatch) -> None:
         db.close()
 
 
+def test_create_reminder_rejects_past_reminder_at(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, summary_id, _ = _create_agent_fixture()
+    past_reminder_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    response = client.post(
+        "/agent/tools",
+        json={
+            "action": "create_reminder",
+            "user_id": user_id,
+            "title": "Check project mail",
+            "notes": "Follow up with mentor",
+            "reminder_at": past_reminder_at,
+            "email_summary_id": summary_id,
+            "transcript": "Remind me about this email tomorrow",
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is False
+    assert "future" in payload["message"].lower()
+
+
 def test_create_recurring_reminder_creates_rule(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, _, _ = _create_agent_fixture()
+    response = client.post(
+        "/agent/tools",
+        json={
+            "action": "create_recurring_reminder",
+            "user_id": user_id,
+            "title": "Daily check-in",
+            "notes": "Daily reminder",
+            "repeat_type": "daily",
+            "time_of_day": "20:00",
+            "timezone": "Asia/Kolkata",
+            "transcript": "Remind me every day at 8 pm",
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True
+    rule_id = payload["data"]["recurring_rule_id"]
+    db = SessionLocal()
+    try:
+        rule = db.query(RecurringReminderRule).filter(RecurringReminderRule.id == rule_id).first()
+        assert rule is not None
+        assert rule.title == "Daily check-in"
+    finally:
+        db.close()
+
+
+def test_create_reminder_requires_explicit_user_signal(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, summary_id, _ = _create_agent_fixture()
+    response = client.post(
+        "/agent/tools",
+        json={
+            "action": "create_reminder",
+            "user_id": user_id,
+            "title": "Check project mail",
+            "notes": "Follow up with mentor",
+            "reminder_time_text": "tomorrow morning",
+            "email_summary_id": summary_id,
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is False
+    assert "explicit user reminder request" in payload["message"].lower()
+
+
+def test_create_reminder_deduplicates_agent_retries(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, summary_id, _ = _create_agent_fixture()
+    body = {
+        "action": "create_reminder",
+        "user_id": user_id,
+        "title": "Check project mail",
+        "notes": "Follow up with mentor",
+        "reminder_time_text": "tomorrow morning",
+        "email_summary_id": summary_id,
+        "transcript": "Remind me tomorrow morning to check project mail",
+    }
+    first = client.post("/agent/tools", json=body, headers=_headers())
+    second = client.post("/agent/tools", json=body, headers=_headers())
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["success"] is True
+    assert second_payload["success"] is True
+    assert first_payload["data"]["reminder_id"] == second_payload["data"]["reminder_id"]
+
+
+def test_create_recurring_reminder_requires_explicit_user_signal(monkeypatch) -> None:
     _set_agent_key(monkeypatch)
     user_id, _, _ = _create_agent_fixture()
     response = client.post(
@@ -402,15 +536,8 @@ def test_create_recurring_reminder_creates_rule(monkeypatch) -> None:
     )
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["success"] is True
-    rule_id = payload["data"]["recurring_rule_id"]
-    db = SessionLocal()
-    try:
-        rule = db.query(RecurringReminderRule).filter(RecurringReminderRule.id == rule_id).first()
-        assert rule is not None
-        assert rule.title == "Daily check-in"
-    finally:
-        db.close()
+    assert payload["success"] is False
+    assert "explicit user reminder request" in payload["message"].lower()
 
 
 def test_draft_email_reply_creates_draft_only(monkeypatch) -> None:
@@ -468,6 +595,103 @@ def test_send_email_reply_sends_only_existing_draft(monkeypatch) -> None:
     payload = response.json()
     assert payload["success"] is True
     assert payload["data"]["provider_message_id"] == "mock-provider-message-id"
+
+
+def test_send_email_reply_uses_original_sender_recipient(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, summary_id, _ = _create_agent_fixture()
+    db = SessionLocal()
+    try:
+        summary = db.query(EmailSummary).filter(EmailSummary.id == summary_id).first()
+        assert summary is not None
+        message = db.query(EmailMessage).filter(EmailMessage.id == summary.email_message_id).first()
+        assert message is not None
+        message.sender = "LinkedIn Job Alerts <jobs-noreply@linkedin.com>"
+        message.recipient = db.query(User).filter(User.id == user_id).first().email
+        db.add(message)
+        db.commit()
+    finally:
+        db.close()
+
+    draft_response = client.post(
+        "/agent/tools",
+        json={
+            "action": "draft_email_reply",
+            "user_id": user_id,
+            "email_summary_id": summary_id,
+            "reply_instruction": "Tell them I will send it tonight",
+        },
+        headers=_headers(),
+    )
+    draft_id = draft_response.json()["data"]["draft_id"]
+
+    from app.services import agent_tool_service
+
+    store: dict[str, object] = {}
+    monkeypatch.setattr(agent_tool_service, "build", lambda *args, **kwargs: _RecordingGmailService(store))
+    monkeypatch.setattr(
+        agent_tool_service,
+        "get_connection_credentials",
+        lambda _db, _user_id: SimpleNamespace(
+            refresh_token="refresh-token",
+            token="access-token",
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            expired=False,
+        ),
+    )
+
+    response = client.post(
+        "/agent/tools",
+        json={"action": "send_email_reply", "user_id": user_id, "draft_id": draft_id},
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True
+    raw_message = store["send_kwargs"]["body"]["raw"]
+    parsed = message_from_bytes(base64.urlsafe_b64decode(raw_message.encode()))
+    assert parsed["To"] == "jobs-noreply@linkedin.com"
+    assert parsed["To"] != db.query(User).filter(User.id == user_id).first().email
+
+
+def test_send_email_reply_missing_recipient_returns_friendly_error(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    user_id, summary_id, _ = _create_agent_fixture()
+    db = SessionLocal()
+    try:
+        summary = db.query(EmailSummary).filter(EmailSummary.id == summary_id).first()
+        assert summary is not None
+        message = db.query(EmailMessage).filter(EmailMessage.id == summary.email_message_id).first()
+        assert message is not None
+        message.sender = None
+        message.recipient = db.query(User).filter(User.id == user_id).first().email
+        db.add(message)
+        db.commit()
+    finally:
+        db.close()
+
+    draft_response = client.post(
+        "/agent/tools",
+        json={
+            "action": "draft_email_reply",
+            "user_id": user_id,
+            "email_summary_id": summary_id,
+            "reply_instruction": "Tell them I will send it tonight",
+        },
+        headers=_headers(),
+    )
+    draft_id = draft_response.json()["data"]["draft_id"]
+
+    response = client.post(
+        "/agent/tools",
+        json={"action": "send_email_reply", "user_id": user_id, "draft_id": draft_id},
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is False
+    assert "valid recipient" in payload["message"].lower()
 
 
 def test_unsupported_action_returns_400(monkeypatch) -> None:

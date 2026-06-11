@@ -12,6 +12,7 @@ from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
 from app.models.user_call_preference import UserCallPreference
+from app.core.timezone import DEFAULT_TIMEZONE, normalize_timezone_name
 from app.services.mail_summary_call_service import (
     get_mail_call_count_today,
     list_pending_today_summaries,
@@ -22,7 +23,6 @@ from app.services.voice_call_service import start_mail_summary_voice_call
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEZONE = "Asia/Kolkata"
 DEFAULT_SLOT_TIMES = ("09:00", "13:00", "19:00")
 VALID_MINIMUM_EMAIL_COUNTS = {1, 3, 5}
 
@@ -49,7 +49,7 @@ def _normalize_time_string(value: str | None, fallback: str) -> str:
 
 
 def _validate_timezone_name(name: str | None) -> str:
-    timezone_name = (name or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+    timezone_name = normalize_timezone_name(name, DEFAULT_TIMEZONE)
     try:
         ZoneInfo(timezone_name)
     except Exception as exc:
@@ -98,7 +98,7 @@ def _slot_definitions(prefs: UserCallPreference) -> list[tuple[str, str, bool]]:
 
 
 def _build_preview(db: Session, user: User, prefs: UserCallPreference) -> ScheduledSummaryPreview:
-    local_zone = ZoneInfo(prefs.timezone or user.timezone or DEFAULT_TIMEZONE)
+    local_zone = ZoneInfo(normalize_timezone_name(prefs.timezone or user.timezone or DEFAULT_TIMEZONE, DEFAULT_TIMEZONE))
     local_now = datetime.now(local_zone)
     pending_count = len(list_pending_today_summaries(db, user))
 
@@ -224,7 +224,7 @@ def run_due_mail_summary_calls() -> None:
         )
         for user in users:
             prefs = get_or_create_call_preferences(db, user)
-            local_zone = ZoneInfo(prefs.timezone or user.timezone or DEFAULT_TIMEZONE)
+            local_zone = ZoneInfo(normalize_timezone_name(prefs.timezone or user.timezone or DEFAULT_TIMEZONE, DEFAULT_TIMEZONE))
             local_now = datetime.now(local_zone)
             counts = get_mail_call_count_today(db, user)
             if counts["used_calls_today"] >= 3:

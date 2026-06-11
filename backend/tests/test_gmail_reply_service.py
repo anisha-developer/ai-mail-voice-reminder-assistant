@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from email import message_from_bytes
 from datetime import datetime, timezone, date, time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -41,6 +43,40 @@ class _FakeUsers:
 class _FakeGmailService:
     def users(self):
         return _FakeUsers()
+
+
+class _RecordingSendResult:
+    def __init__(self, store: dict[str, object], message_id: str = "msg-123") -> None:
+        self._store = store
+        self._message_id = message_id
+
+    def execute(self) -> dict[str, str]:
+        return {"id": self._message_id}
+
+
+class _RecordingMessages:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def send(self, **kwargs):
+        self._store["send_kwargs"] = kwargs
+        return _RecordingSendResult(self._store)
+
+
+class _RecordingUsers:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def messages(self):
+        return _RecordingMessages(self._store)
+
+
+class _RecordingGmailService:
+    def __init__(self, store: dict[str, object]) -> None:
+        self._store = store
+
+    def users(self):
+        return _RecordingUsers(self._store)
 
 
 @pytest.fixture()
@@ -185,6 +221,7 @@ def test_reply_session_lifecycle_and_send_requires_confirmation(monkeypatch: pyt
         assert actions[0].status == "sent"
     finally:
         db.query(EmailReplyAction).filter(EmailReplyAction.voice_reply_session_id.isnot(None)).delete(synchronize_session=False)
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == reply_test_data["call_log_id"]).delete(synchronize_session=False)
         db.query(VoiceReplySession).delete(synchronize_session=False)
         db.query(MailSummaryCallLog).filter(MailSummaryCallLog.script_text == "Test script").delete(synchronize_session=False)
         db.query(EmailSummary).filter(EmailSummary.short_summary == "Short summary").delete(synchronize_session=False)
@@ -227,5 +264,99 @@ def test_reply_send_blocks_other_user(monkeypatch: pytest.MonkeyPatch, reply_tes
         db.execute(text("DELETE FROM email_summaries WHERE short_summary = 'Short summary'"))
         db.execute(text("DELETE FROM email_messages WHERE gmail_message_id LIKE 'reply-test-%'"))
         db.execute(text("DELETE FROM users WHERE email LIKE 'other-%@example.com'"))
+        db.commit()
+        db.close()
+
+
+def test_reply_uses_original_sender_recipient(monkeypatch: pytest.MonkeyPatch, reply_test_data) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == reply_test_data["user_id"]).first()
+        call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == reply_test_data["call_log_id"]).first()
+        summary = db.query(EmailSummary).filter(EmailSummary.id == reply_test_data["summary_id"]).first()
+        assert user is not None and call_log is not None and summary is not None
+
+        message = db.query(EmailMessage).filter(EmailMessage.id == summary.email_message_id).first()
+        assert message is not None
+        message.sender = "LinkedIn Job Alerts <jobs-noreply@linkedin.com>"
+        message.recipient = user.email
+        db.add(message)
+        db.commit()
+
+        session = gmail_reply_service.start_reply_session(db, user, call_log, summary, reply_body="Please reply")
+        assert session.to_email == "jobs-noreply@linkedin.com"
+
+        store: dict[str, object] = {}
+        monkeypatch.setattr(gmail_reply_service, "build", lambda *args, **kwargs: _RecordingGmailService(store))
+        monkeypatch.setattr(
+            gmail_reply_service,
+            "get_connection_credentials",
+            lambda _db, _user_id: SimpleNamespace(
+                refresh_token="refresh-token",
+                token="access-token",
+                token_uri="https://oauth2.googleapis.com/token",
+                scopes=["https://www.googleapis.com/auth/gmail.send"],
+                expired=False,
+            ),
+        )
+
+        result = gmail_reply_service.send_reply(db, user, session)
+        assert result["provider_message_id"] == "msg-123"
+
+        raw_message = store["send_kwargs"]["body"]["raw"]
+        parsed = message_from_bytes(base64.urlsafe_b64decode(raw_message.encode()))
+        assert parsed["To"] == "jobs-noreply@linkedin.com"
+        assert parsed["To"] != user.email
+    finally:
+        db.query(EmailReplyAction).filter(EmailReplyAction.voice_reply_session_id.isnot(None)).delete(synchronize_session=False)
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == reply_test_data["call_log_id"]).delete(synchronize_session=False)
+        db.query(VoiceReplySession).delete(synchronize_session=False)
+        db.query(MailSummaryCallLog).filter(MailSummaryCallLog.script_text == "Test script").delete(synchronize_session=False)
+        db.query(EmailSummary).filter(EmailSummary.short_summary == "Short summary").delete(synchronize_session=False)
+        db.query(EmailMessage).filter(EmailMessage.gmail_message_id.like("reply-test-%")).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_reply_send_missing_recipient_returns_friendly_error(monkeypatch: pytest.MonkeyPatch, reply_test_data) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == reply_test_data["user_id"]).first()
+        call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == reply_test_data["call_log_id"]).first()
+        summary = db.query(EmailSummary).filter(EmailSummary.id == reply_test_data["summary_id"]).first()
+        assert user is not None and call_log is not None and summary is not None
+
+        message = db.query(EmailMessage).filter(EmailMessage.id == summary.email_message_id).first()
+        assert message is not None
+        message.sender = None
+        message.recipient = user.email
+        db.add(message)
+        db.commit()
+
+        session = gmail_reply_service.start_reply_session(db, user, call_log, summary, reply_body="Please reply")
+        assert session.to_email is None
+
+        monkeypatch.setattr(
+            gmail_reply_service,
+            "get_connection_credentials",
+            lambda _db, _user_id: SimpleNamespace(
+                refresh_token="refresh-token",
+                token="access-token",
+                token_uri="https://oauth2.googleapis.com/token",
+                scopes=["https://www.googleapis.com/auth/gmail.send"],
+                expired=False,
+            ),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            gmail_reply_service.send_reply(db, user, session)
+        assert "valid recipient" in str(exc_info.value.detail).lower()
+    finally:
+        db.query(EmailReplyAction).filter(EmailReplyAction.voice_reply_session_id.isnot(None)).delete(synchronize_session=False)
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == reply_test_data["call_log_id"]).delete(synchronize_session=False)
+        db.query(VoiceReplySession).delete(synchronize_session=False)
+        db.query(MailSummaryCallLog).filter(MailSummaryCallLog.script_text == "Test script").delete(synchronize_session=False)
+        db.query(EmailSummary).filter(EmailSummary.short_summary == "Short summary").delete(synchronize_session=False)
+        db.query(EmailMessage).filter(EmailMessage.gmail_message_id.like("reply-test-%")).delete(synchronize_session=False)
         db.commit()
         db.close()

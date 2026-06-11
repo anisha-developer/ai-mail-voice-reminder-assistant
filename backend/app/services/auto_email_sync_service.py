@@ -151,7 +151,11 @@ def get_auto_sync_status(db: Session, user: User) -> dict[str, object]:
     )
     unsummarized_count = (
         db.query(EmailMessage)
-        .filter(EmailMessage.user_id == user.id, EmailMessage.is_summarized.is_(False))
+        .filter(
+            EmailMessage.user_id == user.id,
+            EmailMessage.is_in_inbox.is_(True),
+            EmailMessage.is_summarized.is_(False),
+        )
         .count()
     )
     return {

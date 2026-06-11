@@ -24,6 +24,7 @@ class EmailMessage(Base):
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     attachment_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read_from_gmail: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_in_inbox: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     is_summarized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"), nullable=False)

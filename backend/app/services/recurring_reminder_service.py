@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.recurring_reminder_rule import RecurringReminderRule
 from app.models.reminder import Reminder
 from app.models.user import User
+from app.core.timezone import normalize_timezone_name
 from app.services.reminder_service import claim_reminder_for_call, reminder_to_item, start_reminder_call
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def _validate_rule_payload(payload) -> None:
 
 def _rule_from_payload(user: User, payload) -> RecurringReminderRule:
     _validate_rule_payload(payload)
-    timezone_name = (payload.timezone or user.timezone or "UTC").strip() or "UTC"
+    timezone_name = normalize_timezone_name(payload.timezone or user.timezone or "UTC", "UTC")
     return RecurringReminderRule(
         user_id=user.id,
         title=payload.title.strip(),
@@ -112,19 +113,19 @@ def _parse_time_of_day(value: str | None) -> time | None:
 
 
 def _combine_local(day: date, clock: time, timezone_name: str) -> datetime:
-    local_zone = ZoneInfo(timezone_name or "UTC")
+    local_zone = ZoneInfo(normalize_timezone_name(timezone_name, "UTC"))
     return datetime.combine(day, clock, tzinfo=local_zone).astimezone(timezone.utc)
 
 
 def _current_local(now_utc: datetime, timezone_name: str) -> datetime:
-    return now_utc.astimezone(ZoneInfo(timezone_name or "UTC"))
+    return now_utc.astimezone(ZoneInfo(normalize_timezone_name(timezone_name, "UTC")))
 
 
 def compute_next_occurrence(rule: RecurringReminderRule, reference: datetime | None = None) -> datetime | None:
     if not rule.is_active or rule.cancelled_at:
         return None
     now_utc = reference or _now_utc()
-    local_zone = ZoneInfo(rule.timezone or "UTC")
+    local_zone = ZoneInfo(normalize_timezone_name(rule.timezone, "UTC"))
     local_now = now_utc.astimezone(local_zone)
 
     repeat_type = rule.repeat_type
@@ -202,6 +203,29 @@ def compute_next_occurrence(rule: RecurringReminderRule, reference: datetime | N
 
 def create_recurring_rule(db: Session, user: User, payload) -> dict[str, object]:
     rule = _rule_from_payload(user, payload)
+    if (rule.source_type or "").lower() in {"voice", "agent"}:
+        existing = (
+            db.query(RecurringReminderRule)
+            .filter(
+                RecurringReminderRule.user_id == user.id,
+                RecurringReminderRule.cancelled_at.is_(None),
+                RecurringReminderRule.title == rule.title,
+                RecurringReminderRule.notes == rule.notes,
+                RecurringReminderRule.timezone == rule.timezone,
+                RecurringReminderRule.repeat_type == rule.repeat_type,
+                RecurringReminderRule.interval_value == rule.interval_value,
+                RecurringReminderRule.interval_unit == rule.interval_unit,
+                RecurringReminderRule.days_of_week == rule.days_of_week,
+                RecurringReminderRule.day_of_month == rule.day_of_month,
+                RecurringReminderRule.time_of_day == rule.time_of_day,
+                RecurringReminderRule.email_message_id == rule.email_message_id,
+                RecurringReminderRule.email_summary_id == rule.email_summary_id,
+            )
+            .order_by(RecurringReminderRule.id.desc())
+            .first()
+        )
+        if existing is not None:
+            return recurring_rule_to_item(existing)
     rule.next_occurrence_at = compute_next_occurrence(rule)
     db.add(rule)
     db.commit()

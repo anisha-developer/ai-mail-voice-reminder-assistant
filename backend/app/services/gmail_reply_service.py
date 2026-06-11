@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import parseaddr
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -39,6 +40,31 @@ def get_active_reply_session(db: Session, user: User, call_log: MailSummaryCallL
     return _active_session(db, user.id, call_log.id)
 
 
+def _extract_email_address(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    display_name, email_addr = parseaddr(raw)
+    candidate = (email_addr or "").strip()
+    if "@" in candidate:
+        return candidate
+    if "@" in raw and "<" not in raw and ">" not in raw:
+        return raw
+    if display_name and "@" in display_name:
+        return display_name.strip()
+    return None
+
+
+def resolve_reply_recipient(email_message: GmailEmailMessage | None) -> str | None:
+    if email_message is None:
+        return None
+    for candidate in (getattr(email_message, "reply_to", None), email_message.sender):
+        resolved = _extract_email_address(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
 def start_reply_session(
     db: Session,
     user: User,
@@ -57,7 +83,7 @@ def start_reply_session(
         status="awaiting_confirmation" if reply_body else "awaiting_body",
         gmail_thread_id=target_email_summary.email_message.gmail_thread_id if target_email_summary.email_message else None,
         gmail_message_id=target_email_summary.email_message.gmail_message_id if target_email_summary.email_message else None,
-        to_email=target_email_summary.email_message.recipient if target_email_summary.email_message else None,
+        to_email=resolve_reply_recipient(target_email_summary.email_message),
         subject=target_email_summary.subject,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -102,8 +128,13 @@ def cancel_reply(db: Session, session: VoiceReplySession, reason: str | None = N
 
 
 def _build_raw_message(user: User, session: VoiceReplySession, reply_body: str) -> str:
+    if not session.to_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="I could not find a valid recipient for this reply. Please choose a different email.",
+        )
     msg = EmailMessage()
-    msg["To"] = session.to_email or user.email
+    msg["To"] = session.to_email
     subject = session.subject or "Re: your email"
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
@@ -120,6 +151,15 @@ def send_reply(db: Session, user: User, session: VoiceReplySession) -> dict[str,
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reply is not ready to send")
     if not session.reply_body:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reply body is missing")
+    recipient = resolve_reply_recipient(session.email_message) or (session.to_email.strip() if session.to_email else None)
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="I could not find a valid recipient for this reply. Please choose a different email.",
+        )
+    session.to_email = recipient
+    session.updated_at = datetime.now(timezone.utc)
+    db.add(session)
     creds = get_connection_credentials(db, user.id)
     if creds is None or not creds.refresh_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="I need Gmail send permission before I can send replies. Please reconnect Gmail from the dashboard.")

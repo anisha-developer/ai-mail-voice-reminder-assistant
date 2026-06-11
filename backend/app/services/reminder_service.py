@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.reminder import Reminder
 from app.models.user import User
+from app.core.timezone import normalize_timezone_name
 from app.services.reminder_voice_service import REMINDER_PROVIDER_TWILIO, start_reminder_call
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ RETRY_DELAYS_MINUTES = {1: 2, 2: 5, 3: 10}
 
 
 def _user_timezone_name(user: User, timezone_name: str | None) -> str:
-    return (timezone_name or user.timezone or "UTC").strip() or "UTC"
+    return normalize_timezone_name(timezone_name or user.timezone or "UTC", "UTC")
 
 
 def _parse_local_reminder_datetime(reminder_date: str, reminder_time: str, timezone_name: str) -> datetime:
@@ -49,13 +50,37 @@ def create_reminder(db: Session, user: User, payload) -> dict[str, object]:
     reminder_at = _parse_local_reminder_datetime(payload.reminder_date, reminder_time, _user_timezone_name(user, payload.timezone))
     if reminder_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reminder time must be in the future")
+    source_type = (getattr(payload, "source_type", None) or "manual").strip().lower()
+    normalized_title = payload.title.strip()
+    normalized_notes = (payload.notes or "").strip() or None
+    normalized_timezone = _user_timezone_name(user, payload.timezone)
+    normalized_phone = _resolve_phone(user, payload.phone_number)
+
+    # Voice/agent reminder creation can be retried by webhooks or agent loops.
+    # Reuse an equivalent recent reminder instead of inserting duplicates.
+    if source_type in {"voice", "agent"}:
+        existing = (
+            db.query(Reminder)
+            .filter(
+                Reminder.user_id == user.id,
+                Reminder.title == normalized_title,
+                Reminder.reminder_at == reminder_at,
+                Reminder.phone_number == normalized_phone,
+                Reminder.status != "cancelled",
+            )
+            .order_by(Reminder.id.desc())
+            .first()
+        )
+        if existing is not None and (existing.notes or None) == normalized_notes:
+            return reminder_to_item(existing)
+
     reminder = Reminder(
         user_id=user.id,
-        title=payload.title.strip(),
-        notes=(payload.notes or "").strip() or None,
+        title=normalized_title,
+        notes=normalized_notes,
         reminder_at=reminder_at,
-        timezone=_user_timezone_name(user, payload.timezone),
-        phone_number=_resolve_phone(user, payload.phone_number),
+        timezone=normalized_timezone,
+        phone_number=normalized_phone,
         status="scheduled",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -120,6 +145,8 @@ def update_reminder(db: Session, user: User, reminder_id: int, payload) -> dict[
 
 def cancel_reminder(db: Session, user: User, reminder_id: int) -> dict[str, object]:
     reminder = get_reminder(db, user, reminder_id)
+    if reminder.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reminder can no longer be cancelled")
     reminder.status = "cancelled"
     reminder.next_retry_at = None
     reminder.snoozed_until = None
@@ -333,6 +360,8 @@ def run_due_reminder_calls() -> None:
 
 def snooze_reminder(db: Session, user: User, reminder_id: int, minutes: int) -> Reminder:
     reminder = get_reminder(db, user, reminder_id)
+    if reminder.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reminder can no longer be snoozed")
     snooze_minutes = max(1, min(int(minutes), 24 * 60))
     now_utc = datetime.now(timezone.utc)
     reminder.status = "snoozed"
@@ -347,6 +376,8 @@ def snooze_reminder(db: Session, user: User, reminder_id: int, minutes: int) -> 
 
 def mark_reminder_done(db: Session, user: User, reminder_id: int) -> Reminder:
     reminder = get_reminder(db, user, reminder_id)
+    if reminder.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reminder can no longer be updated")
     now_utc = datetime.now(timezone.utc)
     reminder.status = "completed"
     reminder.completed_manually_at = now_utc

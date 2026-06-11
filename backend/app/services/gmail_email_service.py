@@ -83,11 +83,47 @@ def _gmail_service_for_user(db: Session, user_id: int):
 def _latest_stored_received_at(db: Session, user_id: int):
     latest = (
         db.query(EmailMessage)
-        .filter(EmailMessage.user_id == user_id)
+        .filter(EmailMessage.user_id == user_id, EmailMessage.is_in_inbox.is_(True))
         .order_by(EmailMessage.received_at.desc().nullslast(), EmailMessage.id.desc())
         .first()
     )
     return latest.received_at if latest else None
+
+
+def _fetch_current_inbox_snapshot(gmail_service) -> tuple[set[str], datetime | None]:
+    inbox_message_ids: set[str] = set()
+    latest_gmail_received_at = None
+    first_message_id: str | None = None
+    page_token = None
+
+    while True:
+        response = gmail_service.users().messages().list(
+            userId="me",
+            labelIds=["INBOX"],
+            maxResults=500,
+            pageToken=page_token,
+        ).execute()
+        messages = response.get("messages", [])
+        if messages and first_message_id is None:
+            first_message_id = messages[0].get("id")
+        for message_meta in messages:
+            message_id = message_meta.get("id")
+            if message_id:
+                inbox_message_ids.add(message_id)
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    if first_message_id:
+        try:
+            newest = gmail_service.users().messages().get(userId="me", id=first_message_id, format="metadata").execute()
+            newest_internal_date = newest.get("internalDate")
+            if newest_internal_date:
+                latest_gmail_received_at = datetime.fromtimestamp(int(newest_internal_date) / 1000, tz=timezone.utc)
+        except Exception:
+            latest_gmail_received_at = None
+
+    return inbox_message_ids, latest_gmail_received_at
 
 
 def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: int = 3) -> dict[str, int | str | None | list[int] | list[str]]:
@@ -95,12 +131,15 @@ def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: 
     processed = 0
     inserted = 0
     duplicates = 0
+    deactivated = 0
     gmail_message_ids: list[str] = []
     inserted_email_ids: list[int] = []
     inserted_gmail_message_ids: list[str] = []
     latest_gmail_received_at = None
     latest_stored_received_at = _latest_stored_received_at(db, user.id)
     pages_fetched = 0
+
+    inbox_message_ids, latest_gmail_received_at = _fetch_current_inbox_snapshot(gmail_service)
 
     try:
         response = gmail_service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=max_results).execute()
@@ -123,7 +162,17 @@ def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: 
                 .first()
             )
             if existing:
-                duplicates += 1
+                if not existing.is_in_inbox and message_id in inbox_message_ids:
+                    existing.is_in_inbox = True
+                    existing.updated_at = datetime.now(timezone.utc)
+                    db.add(existing)
+                    try:
+                        db.commit()
+                    except Exception as exc:
+                        db.rollback()
+                        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database save failure") from exc
+                else:
+                    duplicates += 1
                 continue
 
             try:
@@ -184,21 +233,31 @@ def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: 
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail API request failed") from exc
 
-    if latest_gmail_received_at is None and gmail_message_ids:
+    active_rows = (
+        db.query(EmailMessage)
+        .filter(EmailMessage.user_id == user.id, EmailMessage.is_in_inbox.is_(True))
+        .all()
+    )
+    for email in active_rows:
+        if email.gmail_message_id not in inbox_message_ids:
+            email.is_in_inbox = False
+            email.updated_at = datetime.now(timezone.utc)
+            db.add(email)
+            deactivated += 1
+
+    if deactivated:
         try:
-            newest = gmail_service.users().messages().get(userId="me", id=gmail_message_ids[0], format="metadata").execute()
-            newest_internal_date = newest.get("internalDate")
-            if newest_internal_date:
-                latest_gmail_received_at = datetime.fromtimestamp(int(newest_internal_date) / 1000, tz=timezone.utc)
-        except Exception:
-            latest_gmail_received_at = None
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database save failure") from exc
 
     latest_stored_received_at = _latest_stored_received_at(db, user.id)
 
     logger.info(
         "Gmail sync user_id=%s gmail_returned=%s first_ids=%s latest_gmail_received_at=%s latest_stored_received_at=%s synced_count=%s skipped_duplicates=%s total_processed=%s max_results=%s max_pages=%s",
         user.id,
-        len(gmail_message_ids),
+        len(inbox_message_ids),
         gmail_message_ids[:5],
         latest_gmail_received_at.isoformat() if latest_gmail_received_at else None,
         latest_stored_received_at.isoformat() if latest_stored_received_at else None,
@@ -215,14 +274,14 @@ def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: 
         "total_processed": processed,
         "latest_gmail_received_at": latest_gmail_received_at,
         "latest_stored_received_at": latest_stored_received_at,
-        "gmail_returned_count": len(gmail_message_ids),
+        "gmail_returned_count": len(inbox_message_ids),
         "inserted_email_ids": inserted_email_ids,
         "inserted_gmail_message_ids": inserted_gmail_message_ids,
     }
 
 
 def list_user_emails(db: Session, user_id: int, page: int, limit: int) -> tuple[list[EmailMessage], int]:
-    query = db.query(EmailMessage).filter(EmailMessage.user_id == user_id)
+    query = db.query(EmailMessage).filter(EmailMessage.user_id == user_id, EmailMessage.is_in_inbox.is_(True))
     total = query.count()
     items = (
         query.order_by(EmailMessage.received_at.desc().nullslast(), EmailMessage.id.desc())
@@ -242,10 +301,19 @@ def get_user_email(db: Session, user_id: int, email_id: int) -> EmailMessage:
 
 def get_sync_status(db: Session, user_id: int) -> dict[str, object]:
     connection = _get_connection(db, user_id)
-    total = db.query(EmailMessage).filter(EmailMessage.user_id == user_id).count()
+    total = db.query(EmailMessage).filter(EmailMessage.user_id == user_id, EmailMessage.is_in_inbox.is_(True)).count()
+    if connection and connection.is_connected:
+        try:
+            gmail_service, _ = _gmail_service_for_user(db, user_id)
+            inbox_message_ids, _latest_gmail_received_at = _fetch_current_inbox_snapshot(gmail_service)
+            total = len(inbox_message_ids)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.warning("Gmail inbox count fallback to local cache for user_id=%s", user_id, exc_info=True)
     last_email = (
         db.query(EmailMessage)
-        .filter(EmailMessage.user_id == user_id)
+        .filter(EmailMessage.user_id == user_id, EmailMessage.is_in_inbox.is_(True))
         .order_by(EmailMessage.updated_at.desc(), EmailMessage.id.desc())
         .first()
     )

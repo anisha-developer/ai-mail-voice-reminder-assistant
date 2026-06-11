@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.session import Base
@@ -8,7 +8,14 @@ from app.database.session import Base
 
 class GmailConnection(Base):
     __tablename__ = "gmail_connections"
-    __table_args__ = (UniqueConstraint("user_id", "is_connected", name="uq_gmail_connections_user_active"),)
+    __table_args__ = (
+        Index(
+            "uq_gmail_connections_user_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_connected = true"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)

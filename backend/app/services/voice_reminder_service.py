@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from app.config import settings
+from app.core.timezone import normalize_timezone_name
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.recurring_reminder_rule import RecurringReminderRule
@@ -137,6 +138,22 @@ def start_reminder_session(
     day_of_month: int | None = None,
     time_of_day: str | None = None,
 ) -> VoiceReminderSession:
+    existing = _active_session(db, user.id, call_log.id)
+    if existing is not None:
+        same_target = existing.email_summary_id == (summary.id if summary else None) and existing.target_email_reference == target_email_reference
+        same_repeat = (existing.repeat_type or None) == (repeat_type or None)
+        if same_target and same_repeat:
+            if reminder_datetime is not None:
+                existing.reminder_at = reminder_datetime
+                existing.status = "awaiting_confirmation"
+            if reminder_text and not existing.reminder_notes:
+                existing.reminder_notes = reminder_text
+            existing.updated_at = datetime.now(timezone.utc)
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
     title = f"Check email: {summary.subject or 'No subject'}" if summary else "General reminder"
     notes_parts: list[str] = []
     if summary:
@@ -224,6 +241,7 @@ def _build_create_payload(user: User, session: VoiceReminderSession):
             "reminder_time": local_dt.strftime("%H:%M"),
             "timezone": reminder_zone,
             "phone_number": session.reminder_phone_number,
+            "source_type": "voice",
         },
     )()
 
@@ -250,6 +268,15 @@ def _build_recurring_payload(user: User, session: VoiceReminderSession):
 
 
 def send_reminder_creation(db: Session, user: User, session: VoiceReminderSession) -> Reminder:
+    if session.created_reminder_id is not None:
+        existing = db.query(Reminder).filter(Reminder.id == session.created_reminder_id, Reminder.user_id == user.id).first()
+        if existing is not None:
+            return existing
+    if _is_past_reminder_time(session.reminder_at):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That reminder time has already passed. Please give me a future time.",
+        )
     reminder = create_reminder(db, user, _build_create_payload(user, session))
     created = db.query(Reminder).filter(Reminder.id == reminder["id"]).first()
     if created is None:
@@ -264,6 +291,14 @@ def send_reminder_creation(db: Session, user: User, session: VoiceReminderSessio
 
 
 def send_recurring_reminder_creation(db: Session, user: User, session: VoiceReminderSession):
+    if session.created_recurring_rule_id is not None:
+        existing = (
+            db.query(RecurringReminderRule)
+            .filter(RecurringReminderRule.id == session.created_recurring_rule_id, RecurringReminderRule.user_id == user.id)
+            .first()
+        )
+        if existing is not None:
+            return existing
     payload = _build_recurring_payload(user, session)
     rule = create_recurring_rule(db, user, payload)
     created = db.query(RecurringReminderRule).filter(RecurringReminderRule.id == rule["id"]).first()
@@ -282,6 +317,14 @@ def build_reminder_details_prompt(call_log_id: int) -> str:
     return build_gather_twiml(
         call_log_id,
         "What date and time should I set the reminder for?",
+        "You can say something like tomorrow at 3 pm, or Monday at 10 am.",
+    )
+
+
+def build_reminder_time_correction_twiml(call_log_id: int) -> str:
+    return build_gather_twiml(
+        call_log_id,
+        "That time has already passed. Please tell me a future time.",
         "You can say something like tomorrow at 3 pm, or Monday at 10 am.",
     )
 
@@ -317,6 +360,24 @@ def _parse_iso_datetime(candidate: str | None) -> datetime | None:
         return None
 
 
+def _is_past_reminder_time(reminder_dt: datetime | None) -> bool:
+    if reminder_dt is None:
+        return False
+    candidate = reminder_dt
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone.utc)
+    return candidate.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+
+
+def _mark_session_needs_new_time(db: Session, session: VoiceReminderSession, reason: str) -> None:
+    session.status = "awaiting_details"
+    session.last_error = reason
+    session.updated_at = datetime.now(timezone.utc)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+
 DEFAULT_TIME_PERIODS = {
     "morning": (9, 0),
     "afternoon": (14, 0),
@@ -331,7 +392,7 @@ def _parse_relative_reminder_time(text: str, timezone_name: str, base: datetime 
     from dateparser import parse as dateparse
 
     try:
-        local_zone = ZoneInfo(timezone_name or "UTC")
+        local_zone = ZoneInfo(normalize_timezone_name(timezone_name, "UTC"))
     except Exception:
         local_zone = timezone.utc
     base_dt = base or datetime.now(local_zone)
@@ -455,6 +516,9 @@ def process_reminder_session_webhook(
         cancel_reminder_session(db, session, "user cancelled reminder creation")
         return build_reminder_cancellation_twiml()
     if digits == "1" or intent == INTENT_CONFIRM_CREATE_REMINDER or normalized in {"yes", "yeah", "yep", "ok", "okay", "save", "save it", "save this", "yes save", "yes save it", "yes create it", "create it", "create", "confirm", "okay save it", "ok save it", "yeah save it", "yes please", "do it"} or normalized.startswith("yes "):
+        if not session.repeat_type and _is_past_reminder_time(session.reminder_at):
+            _mark_session_needs_new_time(db, session, "Reminder time must be in the future")
+            return build_reminder_time_correction_twiml(call_log.id)
         if session.repeat_type:
             created = send_recurring_reminder_creation(db, call_log.user, session)
         else:
@@ -464,11 +528,17 @@ def process_reminder_session_webhook(
         parsed = parse_reminder_datetime(text, session.reminder_timezone or call_log.user.timezone)
         if parsed is None:
             return build_reminder_details_prompt(call_log.id)
+        if _is_past_reminder_time(parsed):
+            _mark_session_needs_new_time(db, session, "Reminder time must be in the future")
+            return build_reminder_time_correction_twiml(call_log.id)
         update_reminder_details(db, session, parsed, session.reminder_timezone or call_log.user.timezone or "UTC")
         local_dt = parsed.astimezone(timezone.utc)
         summary = f"I will create this reminder: {session.reminder_title or 'General reminder'} at {local_dt.strftime('%A %B %d at %I:%M %p UTC')}. " + _safe_user_reply_prompt()
         return build_reminder_confirmation_twiml(call_log.id, summary)
     if session.status == "awaiting_confirmation":
+        if _is_past_reminder_time(session.reminder_at):
+            _mark_session_needs_new_time(db, session, "Reminder time must be in the future")
+            return build_reminder_time_correction_twiml(call_log.id)
         summary = (
             f"I will create this reminder: {session.reminder_title or 'General reminder'} "
             f"at {session.reminder_at.astimezone(timezone.utc).strftime('%A %B %d at %I:%M %p UTC') if session.reminder_at else 'the requested time'}. "

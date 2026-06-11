@@ -16,16 +16,19 @@ from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
 from app.models.voice_call_interaction import VoiceCallInteraction
+from app.core.timezone import normalize_timezone_name
 from app.services.email_summarization_service import summary_to_detail
 from app.services.gmail_oauth_service import get_connection_credentials
+from app.services.gmail_reply_service import resolve_reply_recipient
 from app.services.mail_summary_call_service import list_pending_today_summaries, list_todays_summaries
 from app.services.recurring_reminder_service import create_recurring_rule
 from app.services.reminder_service import create_reminder
+from app.services.voice_intent_service import INTENT_START_REMINDER_CREATE, parse_voice_intent
 from app.services.voice_reminder_service import parse_reminder_datetime
 
 
 def _user_timezone(user: User) -> str:
-    return (user.timezone or "UTC").strip() or "UTC"
+    return normalize_timezone_name(user.timezone, "UTC")
 
 
 def _get_user(db: Session, user_id: int) -> User | None:
@@ -253,7 +256,47 @@ def _linked_email_note(summary: EmailSummary | None, reference: int | None) -> s
     return f"Linked to {ref_text}: {sender} / {subject}"
 
 
+def _combined_user_signal(request) -> str:
+    parts = [
+        (request.transcript or "").strip(),
+        (request.action_summary or "").strip(),
+        (request.notes or "").strip(),
+        (request.title or "").strip(),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _has_explicit_reminder_creation_signal(request) -> bool:
+    signal = _combined_user_signal(request)
+    if not signal:
+        return False
+    parsed = parse_voice_intent(signal)
+    normalized = signal.lower()
+    if parsed.intent == INTENT_START_REMINDER_CREATE:
+        return True
+    explicit_phrases = (
+        "remind me",
+        "create reminder",
+        "set a reminder",
+        "set reminder",
+        "add reminder",
+        "save reminder",
+        "save it",
+        "yes save it",
+        "create recurring reminder",
+        "every day at",
+        "every week",
+    )
+    return any(phrase in normalized for phrase in explicit_phrases)
+
+
 def create_reminder_tool(db: Session, user: User, request) -> dict[str, Any]:
+    if not _has_explicit_reminder_creation_signal(request):
+        return {
+            "success": False,
+            "message": "I only create reminders after an explicit user reminder request or confirmation.",
+            "data": {},
+        }
     if not request.title or not request.title.strip():
         return {"success": False, "message": "Please provide a reminder title.", "data": {}}
     reminder_at, error = _parse_reminder_time(user, request)
@@ -289,6 +332,7 @@ def create_reminder_tool(db: Session, user: User, request) -> dict[str, Any]:
         reminder_time=local_dt.strftime("%H:%M"),
         timezone=_user_timezone(user),
         phone_number=user.phone_number,
+        source_type="agent",
     )
     reminder = create_reminder(db, user, payload)
     return {
@@ -299,6 +343,12 @@ def create_reminder_tool(db: Session, user: User, request) -> dict[str, Any]:
 
 
 def create_recurring_reminder_tool(db: Session, user: User, request) -> dict[str, Any]:
+    if not _has_explicit_reminder_creation_signal(request):
+        return {
+            "success": False,
+            "message": "I only create recurring reminders after an explicit user reminder request or confirmation.",
+            "data": {},
+        }
     if not request.title or not request.title.strip():
         return {"success": False, "message": "Please provide a recurring reminder title.", "data": {}}
     repeat_type = (request.repeat_type or "").strip().lower()
@@ -403,13 +453,19 @@ def _deliver_reply_from_action(db: Session, user: User, action: EmailReplyAction
     email = db.query(EmailMessage).filter(EmailMessage.user_id == user.id, EmailMessage.id == action.email_message_id).first()
     if email is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
+    recipient = resolve_reply_recipient(email)
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="I could not find a valid recipient for this reply. Please choose a different email.",
+        )
     creds = get_connection_credentials(db, user.id)
     if creds is None or not getattr(creds, "refresh_token", None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="I need Gmail send permission before I can send replies. Please reconnect Gmail from the dashboard.")
     if "https://www.googleapis.com/auth/gmail.send" not in (getattr(creds, "scopes", []) or []):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="I need Gmail send permission before I can send replies. Please reconnect Gmail from the dashboard.")
     gmail_service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-    raw_message = _build_raw_message(user, email.recipient or user.email, email.subject or "Re: your email", action.reply_body or "")
+    raw_message = _build_raw_message(user, recipient, email.subject or "Re: your email", action.reply_body or "")
     sent_message = gmail_service.users().messages().send(userId="me", body={"raw": raw_message, "threadId": action.gmail_thread_id}).execute()
     action.status = "sent"
     action.provider_message_id = sent_message.get("id")
@@ -427,7 +483,10 @@ def send_email_reply_tool(db: Session, user: User, request) -> dict[str, Any]:
         return {"success": False, "message": "I could not find that draft.", "data": {}}
     if action.status != "drafted":
         return {"success": False, "message": "That draft has already been sent or is no longer available.", "data": {}}
-    provider_message_id = _deliver_reply_from_action(db, user, action)
+    try:
+        provider_message_id = _deliver_reply_from_action(db, user, action)
+    except HTTPException as exc:
+        return {"success": False, "message": str(exc.detail), "data": {}}
     return {"success": True, "message": "Reply sent successfully.", "data": {"draft_id": action.id, "provider_message_id": provider_message_id}}
 
 

@@ -22,6 +22,7 @@ from app.services.voice_reminder_service import (
     build_reminder_created_twiml,
     build_reminder_confirmation_twiml,
     build_reminder_details_prompt,
+    build_reminder_time_correction_twiml,
     get_active_reminder_session,
     parse_reminder_datetime,
     process_reminder_session_webhook,
@@ -714,6 +715,29 @@ def process_twilio_speech_webhook(
             if digits == "1" or parsed.intent in {INTENT_CONFIRM_CREATE_REMINDER} or normalized in {"yes", "yeah", "yep", "ok", "okay", "create it", "create", "yes create it", "yes save it", "save it", "save", "save this", "okay save it", "ok save it", "yeah save it", "yes please", "do it", "confirm"} or normalized.startswith("yes "):
                 try:
                     process_reminder_session_webhook(db, call_log, active_reminder, transcript, confidence, parsed)
+                except HTTPException as exc:
+                    detail_text = str(exc.detail).lower()
+                    if detail_text.startswith("that reminder time has already passed") or detail_text.startswith("reminder time must be in the future"):
+                        _record_interaction(
+                            db,
+                            call_log,
+                            transcript,
+                            INTENT_CAPTURE_REMINDER_DATETIME,
+                            active_reminder.target_email_reference,
+                            confidence,
+                            "That time has already passed. Please tell me a future time.",
+                        )
+                        return build_reminder_details_prompt(call_log.id)
+                    _record_interaction(
+                        db,
+                        call_log,
+                        transcript,
+                        INTENT_UNKNOWN,
+                        active_reminder.target_email_reference,
+                        confidence,
+                        f"Sorry, I could not create the reminder. {exc}",
+                    )
+                    return build_end_call_twiml()
                 except Exception as exc:
                     _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, active_reminder.target_email_reference, confidence, f"Sorry, I could not create the reminder. {exc}")
                     return build_end_call_twiml()
@@ -981,6 +1005,10 @@ def process_twilio_speech_webhook(
                 reminder_dt = datetime.fromisoformat(parsed_intent.reminder_datetime_iso)
             except ValueError:
                 reminder_dt = None
+        if reminder_dt is not None and reminder_dt.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            system_response = "That time has already passed. Please tell me a future time."
+            _record_interaction(db, call_log, transcript, INTENT_CAPTURE_REMINDER_DATETIME, target_ref, confidence, system_response)
+            return build_reminder_time_correction_twiml(call_log.id)
         if target_summary is None and any(marker in (transcript or "").lower() for marker in ("this email", "this mail", "this one")):
             system_response = "Which email should I create the reminder for? Please say email number one, or describe the email."
             _record_interaction(db, call_log, transcript, INTENT_START_REMINDER_CREATE, None, confidence, system_response)

@@ -11,7 +11,7 @@ from app.database.session import SessionLocal
 from app.models.reminder import Reminder
 from app.models.user import User
 from app.schemas.reminder import ReminderCreate, ReminderUpdate
-from app.services.reminder_service import cancel_reminder, create_reminder, get_reminder, list_reminders, update_reminder
+from app.services.reminder_service import cancel_reminder, create_reminder, get_reminder, list_reminders, mark_reminder_done, update_reminder
 
 
 def _get_user(email: str = "browsertest@example.com") -> User:
@@ -179,5 +179,21 @@ def test_list_get_update_cancel_and_cross_user_access() -> None:
     finally:
         db.query(Reminder).filter(Reminder.title.in_(["Submit ML assignment", "Updated title"])).delete(synchronize_session=False)
         db.query(User).filter(User.email.like("reminder-other-%@example.com")).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_completed_reminder_cannot_be_cancelled() -> None:
+    user = _get_user()
+    db = SessionLocal()
+    try:
+        payload = _make_future_payload(minutes=25)
+        reminder = create_reminder(db, user, payload)
+        reminder_id = reminder["id"]
+        mark_reminder_done(db, user, reminder_id)
+        with pytest.raises(HTTPException):
+            cancel_reminder(db, user, reminder_id)
+    finally:
+        db.query(Reminder).filter(Reminder.title == "Submit ML assignment").delete(synchronize_session=False)
         db.commit()
         db.close()

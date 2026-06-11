@@ -11,13 +11,16 @@ from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
+from app.models.user_call_preference import UserCallPreference
+from app.core.timezone import normalize_timezone_name
 from app.services.email_summarization_service import summary_to_item
 
 MAX_MAIL_SUMMARY_CALLS_PER_DAY = 3
+DEFAULT_SLOT_TIMES = ("09:00", "13:00", "19:00")
 
 
 def _user_timezone(user: User) -> ZoneInfo:
-    return ZoneInfo(user.timezone or "UTC")
+    return ZoneInfo(normalize_timezone_name(user.timezone, "UTC"))
 
 
 def _user_local_now(user: User) -> datetime:
@@ -48,20 +51,43 @@ def _parse_summary_ids(payload: str | None) -> list[int]:
     return []
 
 
+def _current_slot_times(db: Session, user_id: int) -> set[str]:
+    prefs = db.query(UserCallPreference).filter(UserCallPreference.user_id == user_id).first()
+    if prefs is None:
+        return set(DEFAULT_SLOT_TIMES)
+    slots = []
+    for slot_time, enabled in (
+        (prefs.call_slot_1_time, prefs.call_slot_1_enabled),
+        (prefs.call_slot_2_time, prefs.call_slot_2_enabled),
+        (prefs.call_slot_3_time, prefs.call_slot_3_enabled),
+    ):
+        if enabled and slot_time:
+            slots.append(str(slot_time)[:5])
+    return set(slots or DEFAULT_SLOT_TIMES)
+
+
 def _counted_mail_summary_calls_query(db: Session, user_id: int, call_date):
     return (
-        db.query(MailSummaryCallLog)
+        db.query(MailSummaryCallLog.call_time)
         .filter(
             MailSummaryCallLog.user_id == user_id,
             MailSummaryCallLog.call_type == "mail_summary",
             MailSummaryCallLog.call_date == call_date,
+            MailSummaryCallLog.delivery_status == "delivered",
         )
     )
 
 
 def get_mail_call_count_today(db: Session, user: User) -> dict[str, object]:
     today, start_utc, end_utc = _today_window_utc(user)
-    used_calls_today = _counted_mail_summary_calls_query(db, user.id, today).count()
+    slot_times = _current_slot_times(db, user.id)
+    used_calls_today = len(
+        {
+            call_time.strftime("%H:%M")
+            for (call_time,) in _counted_mail_summary_calls_query(db, user.id, today).all()
+            if call_time is not None and call_time.strftime("%H:%M") in slot_times
+        }
+    )
     todays_summary_query = _todays_summaries_query(db, user.id, start_utc, end_utc)
     total_today_summaries = todays_summary_query.count()
     pending_today_summaries = _pending_today_summaries_query(db, user.id, start_utc, end_utc).count()
@@ -83,6 +109,8 @@ def _todays_summaries_query(db: Session, user_id: int, start_utc: datetime, end_
         .filter(
             EmailSummary.user_id == user_id,
             EmailSummary.summary_status == "completed",
+            EmailMessage.user_id == user_id,
+            EmailMessage.is_in_inbox.is_(True),
             EmailMessage.received_at.is_not(None),
             EmailMessage.received_at >= start_utc,
             EmailMessage.received_at < end_utc,

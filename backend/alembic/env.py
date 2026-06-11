@@ -14,13 +14,19 @@ from app.database.session import Base  # noqa: E402
 from app.models import (  # noqa: E402,F401
     action_log,
     email_message,
+    email_reply_action,
     email_summary,
     gmail_connection,
     mail_summary_call_log,
+    recurring_reminder_rule,
     reminder,
     reminder_call_log,
     user,
+    user_call_preference,
     user_preference,
+    voice_call_interaction,
+    voice_reminder_session,
+    voice_reply_session,
 )
 
 config = context.config

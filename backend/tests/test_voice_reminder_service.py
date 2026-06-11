@@ -18,7 +18,7 @@ from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.voice_reminder_session import VoiceReminderSession
 from app.services import voice_call_service
 from app.services.voice_intent_service import INTENT_CONFIRM_CREATE_REMINDER, INTENT_START_REMINDER_CREATE, parse_voice_intent
-from app.services.voice_reminder_service import parse_reminder_datetime, process_reminder_session_webhook, start_reminder_session
+from app.services.voice_reminder_service import parse_reminder_datetime, process_reminder_session_webhook, send_reminder_creation, start_reminder_session
 
 
 client = TestClient(app)
@@ -186,5 +186,82 @@ def test_voice_reminder_confirmation_flow() -> None:
 
         interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
         assert interactions.status_code == 200
+    finally:
+        _cleanup_reminder_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_reminder_past_time_confirmation_prompts_for_new_time() -> None:
+    call_log_id, summary_ids, message_ids = _create_reminder_voice_test_call()
+    try:
+        db = SessionLocal()
+        try:
+            VoiceReminderSession.__table__.create(bind=db.get_bind(), checkfirst=True)
+            user = db.query(User).filter(User.email == "browsertest@example.com").first()
+            call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+            assert user is not None and call_log is not None
+            summary = db.query(EmailSummary).filter(EmailSummary.id == summary_ids[0]).first()
+            assert summary is not None
+            before_count = db.query(Reminder).filter(Reminder.user_id == user.id, Reminder.title.like("Check email:%")).count()
+            past_session = start_reminder_session(
+                db,
+                user,
+                call_log,
+                summary,
+                target_email_reference=1,
+                reminder_datetime=datetime.now(timezone.utc) - timedelta(minutes=5),
+            )
+            assert past_session.status == "awaiting_confirmation"
+            result = process_reminder_session_webhook(
+                db,
+                call_log,
+                past_session,
+                "yes save it",
+                "0.98",
+                parse_voice_intent("yes save it"),
+            )
+            assert "future time" in result.lower()
+
+            refreshed = db.query(VoiceReminderSession).filter(VoiceReminderSession.id == past_session.id).first()
+            assert refreshed is not None
+            assert refreshed.status == "awaiting_details"
+            assert refreshed.last_error == "Reminder time must be in the future"
+            assert refreshed.created_reminder_id is None
+            after_count = db.query(Reminder).filter(Reminder.user_id == user.id, Reminder.title.like("Check email:%")).count()
+            assert after_count == before_count
+        finally:
+            db.close()
+    finally:
+        _cleanup_reminder_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_reminder_creation_is_idempotent_for_same_session() -> None:
+    call_log_id, summary_ids, message_ids = _create_reminder_voice_test_call()
+    try:
+        db = SessionLocal()
+        try:
+            VoiceReminderSession.__table__.create(bind=db.get_bind(), checkfirst=True)
+            user = db.query(User).filter(User.email == "browsertest@example.com").first()
+            call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+            summary = db.query(EmailSummary).filter(EmailSummary.id == summary_ids[0]).first()
+            assert user is not None and call_log is not None and summary is not None
+            session = start_reminder_session(
+                db,
+                user,
+                call_log,
+                summary,
+                target_email_reference=1,
+                reminder_datetime=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            created_one = send_reminder_creation(db, user, session)
+            created_two = send_reminder_creation(db, user, session)
+            assert created_one.id == created_two.id
+            matches = (
+                db.query(Reminder)
+                .filter(Reminder.user_id == user.id, Reminder.title == created_one.title, Reminder.reminder_at == created_one.reminder_at)
+                .all()
+            )
+            assert len(matches) == 1
+        finally:
+            db.close()
     finally:
         _cleanup_reminder_voice_test_call(call_log_id, summary_ids, message_ids)

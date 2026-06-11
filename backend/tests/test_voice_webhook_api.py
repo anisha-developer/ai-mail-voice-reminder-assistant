@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timezone, timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -95,7 +95,7 @@ def _create_voice_test_call() -> tuple[int, list[int], list[int]]:
             delivered_summary_ids=json.dumps(summary_ids),
             failure_reason=None,
             provider="twilio",
-            provider_call_id="CA-test-phase9",
+            provider_call_id=f"CA-test-phase9-{uuid4()}",
             to_phone_number=user.phone_number,
             from_phone_number="+17154196839",
             call_started_at=None,
@@ -145,10 +145,15 @@ def test_twilio_speech_webhook_handles_phase9_intents() -> None:
     call_log_id, summary_ids, message_ids = _create_voice_test_call()
     try:
         headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
 
         detail_response = client.post(
             f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
-            data={"SpeechResult": "Tell me more about the first email", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+            data={"SpeechResult": "Tell me more about the first email", "Confidence": "0.92", "CallSid": provider_call_id},
         )
         assert detail_response.status_code == 200
         assert "Gather" in detail_response.text
@@ -162,28 +167,28 @@ def test_twilio_speech_webhook_handles_phase9_intents() -> None:
 
         help_response = client.post(
             f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
-            data={"SpeechResult": "What can I say?", "Confidence": "0.95", "CallSid": "CA-test-phase9"},
+            data={"SpeechResult": "What can I say?", "Confidence": "0.95", "CallSid": provider_call_id},
         )
         assert help_response.status_code == 200
         assert "Gather" in help_response.text
 
         repeat_response = client.post(
             f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
-            data={"SpeechResult": "Repeat that", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+            data={"SpeechResult": "Repeat that", "Confidence": "0.92", "CallSid": provider_call_id},
         )
         assert repeat_response.status_code == 200
         assert "Gather" in repeat_response.text
 
         know_response = client.post(
             f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
-            data={"SpeechResult": "I want to know more", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+            data={"SpeechResult": "I want to know more", "Confidence": "0.92", "CallSid": provider_call_id},
         )
         assert know_response.status_code == 200
         assert "Sorry, I did not understand" in know_response.text or "Gather" in know_response.text
 
         end_response = client.post(
             f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
-            data={"SpeechResult": "no", "Confidence": "0.92", "CallSid": "CA-test-phase9"},
+            data={"SpeechResult": "no", "Confidence": "0.92", "CallSid": provider_call_id},
         )
         assert end_response.status_code == 200
         assert "Ending the call" in end_response.text or "ending the call" in end_response.text.lower()
@@ -346,5 +351,91 @@ def test_twilio_speech_webhook_handles_recurring_reminder_flow() -> None:
         payload = interactions.json()
         assert any(item["detected_intent"] == "CREATE_RECURRING_REMINDER" for item in payload)
         assert any(item["detected_intent"] == "CONFIRM_CREATE_REMINDER" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_speech_webhook_rejects_past_reminder_before_confirmation(monkeypatch) -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        monkeypatch.setattr(
+            voice_call_service,
+            "parse_reminder_datetime",
+            lambda *args, **kwargs: datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+
+        response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Remind me about this email in 2 minutes", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert response.status_code == 200, response.text
+        assert "future time" in response.text.lower()
+
+        db = SessionLocal()
+        try:
+            session = db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).first()
+            assert session is None
+        finally:
+            db.close()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "START_REMINDER_CREATE" or item["detected_intent"] == "CAPTURE_REMINDER_DATETIME" for item in payload)
+    finally:
+        monkeypatch.undo()
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_speech_webhook_uses_last_explained_email_for_this_email_reminder() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        detail_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Explain email number one", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert detail_response.status_code == 200, detail_response.text
+        assert "Gather" in detail_response.text
+
+        reminder_response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "Remind me about this email in 5 minutes", "Confidence": "0.92", "CallSid": provider_call_id},
+        )
+        assert reminder_response.status_code == 200, reminder_response.text
+        assert "save it" in reminder_response.text.lower()
+
+        db = SessionLocal()
+        try:
+            session = db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).first()
+            assert session is not None
+            assert session.email_summary_id == summary_ids[0]
+            assert session.target_email_reference == 1
+            assert session.status == "awaiting_confirmation"
+            assert session.reminder_at is not None
+            assert session.reminder_at > datetime.now(timezone.utc)
+        finally:
+            db.close()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "DETAIL_EMAIL" and item["email_reference"] == 1 for item in payload)
+        assert any(item["detected_intent"] == "START_REMINDER_CREATE" for item in payload)
     finally:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)

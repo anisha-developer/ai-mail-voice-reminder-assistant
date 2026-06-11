@@ -35,6 +35,7 @@ def test_smart_voice_intent_helps_with_ambiguous_inputs() -> None:
 
 def test_reminder_time_parsing_handles_exact_and_vague_times() -> None:
     assert parse_reminder_datetime("in 2 minutes", "Asia/Kolkata") is not None
+    assert parse_reminder_datetime("in 5 minutes", "Asia/Kolkata") is not None
     assert parse_reminder_datetime("after 10 minutes", "Asia/Kolkata") is not None
     assert parse_reminder_datetime("at 6 PM", "Asia/Kolkata") is not None
     assert parse_reminder_datetime("tomorrow morning", "Asia/Kolkata") is not None

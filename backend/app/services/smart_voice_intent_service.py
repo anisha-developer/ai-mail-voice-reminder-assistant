@@ -6,6 +6,8 @@ import logging
 import re
 from zoneinfo import ZoneInfo
 
+from app.core.timezone import normalize_timezone_name
+
 from app.services.voice_intent_service import (
     INTENT_DETAIL_EMAIL,
     INTENT_END_CALL,
@@ -72,7 +74,7 @@ def _has_date_words(text: str) -> bool:
 
 
 def _parse_time_only_reference(normalized: str, timezone_name: str) -> tuple[datetime | None, bool]:
-    local_zone = ZoneInfo(timezone_name or "UTC")
+    local_zone = ZoneInfo(normalize_timezone_name(timezone_name, "UTC"))
     base_now = datetime.now(local_zone)
     if normalized in {"tomorrow"}:
         return None, True
