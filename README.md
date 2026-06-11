@@ -43,7 +43,7 @@ This project combines Gmail OAuth, Gmail sync, AI summarization, Twilio voice de
 - `backend/` FastAPI app, SQLAlchemy models, Alembic, database config, and services
 - `frontend/` React app with Tailwind CSS and app pages
 - `docker-compose.yml` local development stack for PostgreSQL, Redis, backend, and frontend
-- `alembic.ini` Alembic configuration at the repository root
+- `backend/alembic.ini` Alembic configuration for database migrations
 - `.env.example` root-level Docker environment variables
 
 ## Run With Docker Compose
@@ -51,17 +51,41 @@ This project combines Gmail OAuth, Gmail sync, AI summarization, Twilio voice de
 1. Copy `.env.example` to `.env`
 2. Copy `backend/.env.example` to `backend/.env`
 3. Copy `frontend/.env.example` to `frontend/.env`
-4. Start the stack:
+4. Fill in required secrets in `backend/.env`:
+   - `SECRET_KEY`
+   - Gmail OAuth credentials
+   - Twilio credentials for voice calls
+   - `PUBLIC_BACKEND_URL` when testing Twilio locally through ngrok
+5. Start the stack:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-4. Open:
+6. Run migrations:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+7. Open:
    - Frontend: `http://localhost:5173`
    - Backend health: `http://localhost:8000/health`
    - PostgreSQL: `localhost:5432`
    - Redis: `localhost:6379`
+
+8. View logs when needed:
+
+```bash
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+9. Stop the stack:
+
+```bash
+docker compose down
+```
 
 ## Final Demo Flow
 
@@ -136,7 +160,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 ## Run Alembic Migrations
 
-From the repository root or `backend/`:
+From the `backend/` directory:
 
 ```bash
 alembic upgrade head
@@ -474,6 +498,19 @@ Then set:
 ```text
 PUBLIC_BACKEND_URL=https://your-ngrok-url.ngrok-free.app
 ```
+
+Restart the backend after updating `PUBLIC_BACKEND_URL` so Twilio webhook URLs use the current tunnel:
+
+```bash
+docker compose up --build -d backend
+```
+
+### Twilio Docker Notes
+
+- Twilio is the active voice provider for this project.
+- ngrok runs separately from Docker and is not bundled into the compose stack.
+- If the ngrok URL changes, update `PUBLIC_BACKEND_URL` in `backend/.env` and restart the backend container.
+- Legacy ElevenLabs or Make webhook environment variables may still appear in `.env.example`, but they are not required for standard Twilio-based local Docker startup.
 
 ### Backend Voice Endpoints
 
