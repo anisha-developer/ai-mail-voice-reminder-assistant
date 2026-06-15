@@ -13,6 +13,7 @@ from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.user import User
 from app.core.timezone import normalize_timezone_name
+from app.services.gemini_email_agent_service import generate_understanding_summary
 
 
 def _clean_text(value: str | None, fallback: str = "") -> str:
@@ -114,11 +115,56 @@ def _openai_summary(email: EmailMessage) -> dict[str, str]:
     return parsed
 
 
-def _generate_summary(email: EmailMessage) -> dict[str, str]:
+def _legacy_generate_summary(email: EmailMessage) -> dict[str, str]:
     provider = settings.llm_provider.lower().strip()
     if provider == "openai":
         return _openai_summary(email)
     return _mock_summary(email)
+
+
+def _gemini_summary(email: EmailMessage) -> dict[str, str]:
+    generated = generate_understanding_summary(
+        subject=email.subject,
+        sender=email.sender,
+        body=_body_for_summary(email),
+        preferred_language=settings.default_summary_language,
+    )
+    important_points = generated.get("important_points") or []
+    if isinstance(important_points, list):
+        important_points_text = "; ".join(str(item).strip() for item in important_points if str(item).strip())
+    else:
+        important_points_text = str(important_points).strip()
+    detail_parts = [str(generated.get("short_summary") or "").strip()]
+    if important_points_text:
+        detail_parts.append(f"Important points: {important_points_text}")
+    action_required = str(generated.get("action_required") or "").strip()
+    if action_required and action_required.lower() not in {"unclear", "none"}:
+        detail_parts.append(f"Action required: {action_required}")
+    deadline_or_date = str(generated.get("deadline_or_date") or "").strip()
+    if deadline_or_date:
+        detail_parts.append(f"Deadline or date: {deadline_or_date}")
+    suggested_reminder = str(generated.get("suggested_reminder") or "").strip()
+    if suggested_reminder:
+        detail_parts.append(f"Suggested reminder: {suggested_reminder}")
+    detailed_summary = " ".join(part for part in detail_parts if part).strip()
+    if not detailed_summary:
+        detailed_summary = _first_safe_portion(email)
+    return {
+        "short_summary": str(generated.get("short_summary") or _mock_summary(email)["short_summary"]).strip(),
+        "detailed_summary": detailed_summary,
+        "action_required_text": "No clear action requested." if not action_required or action_required.lower() == "unclear" else action_required,
+        "attachment_note": _attachment_note(email),
+    }
+
+
+def _generate_summary(email: EmailMessage) -> dict[str, str]:
+    provider = settings.email_summary_provider.lower().strip()
+    if provider == "gemini" and settings.gemini_api_key:
+        try:
+            return _gemini_summary(email)
+        except Exception:
+            return _legacy_generate_summary(email)
+    return _legacy_generate_summary(email)
 
 
 def generate_all_summaries(db: Session, user: User) -> dict[str, int]:
