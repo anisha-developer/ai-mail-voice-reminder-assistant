@@ -490,6 +490,11 @@ def parse_voice_intent(transcript: str | None) -> ParsedVoiceIntent:
 
     detail_markers = [
         "explain",
+        "explain in detail",
+        "detail",
+        "details",
+        "in detail",
+        "details of",
         "tell me more",
         "read",
         "open",

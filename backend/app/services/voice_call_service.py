@@ -880,41 +880,64 @@ def process_twilio_speech_webhook(
         return build_repeat_summary_twiml(db, call_log)
 
     if intent == INTENT_DETAIL_EMAIL:
-        if detail_count >= MAX_DETAIL_REQUESTS:
-            system_response = "I have already explained two emails on this call. I will end the call now. Have a good day."
-            _record_interaction(db, call_log, transcript, INTENT_END_CALL, email_reference, confidence, system_response)
-            return build_end_call_twiml()
-        resolved = resolve_email_reference_for_call(db, call_log.user, call_log, parsed_intent)
-        lookup_status = resolved.get("status")
-        if lookup_status == "invalid_reference":
-            system_response = resolved.get("message") or "I only read five emails in this call. Please say a number between one and five, or say no to end the call."
-            _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
-            return build_gather_prompt_twiml(call_log.id, system_response)
-        if lookup_status == "multiple_matches":
-            matches = resolved.get("matches") or []
-            parts = ["I found multiple matching emails."]
-            for match in matches[:3]:
-                sender = match.get("sender") or "Unknown sender"
-                subject = match.get("subject") or "No subject"
-                parts.append(f"Email {match.get('email_reference')}. From {sender}. Subject: {subject}.")
-            parts.append("Please say email number one, two, or three.")
-            system_response = " ".join(parts)
-            _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
-            return build_gather_prompt_twiml(call_log.id, system_response)
-        if lookup_status == "no_match":
-            system_response = resolved.get("message") or "I could not find a matching email from today's summaries. You can say email number one, repeat summary, or no to end the call."
-            _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
-            return build_gather_prompt_twiml(call_log.id, system_response)
+        try:
+            if detail_count >= MAX_DETAIL_REQUESTS:
+                system_response = "I have already explained two emails on this call. I will end the call now. Have a good day."
+                _record_interaction(db, call_log, transcript, INTENT_END_CALL, email_reference, confidence, system_response)
+                return build_end_call_twiml()
+            resolved = resolve_email_reference_for_call(db, call_log.user, call_log, parsed_intent)
+            lookup_status = resolved.get("status")
+            if lookup_status == "invalid_reference":
+                system_response = resolved.get("message") or "I only read five emails in this call. Please say a number between one and five, or say no to end the call."
+                _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
+                return build_gather_prompt_twiml(call_log.id, system_response)
+            if lookup_status == "multiple_matches":
+                matches = resolved.get("matches") or []
+                parts = ["I found multiple matching emails."]
+                for match in matches[:3]:
+                    sender = match.get("sender") or "Unknown sender"
+                    subject = match.get("subject") or "No subject"
+                    parts.append(f"Email {match.get('email_reference')}. From {_spoken_sender_name(sender)}. Subject: {_spoken_subject(subject)}.")
+                parts.append("Please say email number one, two, or three.")
+                system_response = " ".join(parts)
+                _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
+                return build_gather_prompt_twiml(call_log.id, system_response)
+            if lookup_status == "no_match":
+                system_response = resolved.get("message") or "I could not find a matching email from today's summaries. You can say email number one, repeat summary, or no to end the call."
+                _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, system_response)
+                return build_gather_prompt_twiml(call_log.id, system_response)
 
-        summary = resolved.get("email_summary")
-        matched_reference = resolved.get("email_reference") or email_reference
-        detail_text = _safe_detail_voice_text(summary, getattr(summary, "detailed_summary", None))
-        system_response = (
-            f"Email {matched_reference}. {detail_text} "
-            "You can say: remind me about this email in two minutes. Or say: reply to this email. Or say: no to end the call."
-        )
-        _record_interaction(db, call_log, transcript, intent, matched_reference, confidence, system_response)
-        return build_detail_email_twiml(call_log.id, detail_text)
+            summary = resolved.get("email_summary")
+            matched_reference = resolved.get("email_reference") or email_reference
+            detail_text = _safe_detail_voice_text(summary, getattr(summary, "detailed_summary", None))
+            system_response = (
+                f"Email {matched_reference}. {detail_text} "
+                "You can say: remind me about this email in two minutes. Or say: reply to this email. Or say: no to end the call."
+            )
+            _record_interaction(db, call_log, transcript, intent, matched_reference, confidence, system_response)
+            return build_detail_email_twiml(call_log.id, detail_text)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Failed to handle detail email request for call_log_id=%s transcript=%r error=%s: %s",
+                call_log.id,
+                transcript[:180] if transcript else "",
+                type(exc).__name__,
+                exc,
+            )
+            safe_response = "Sorry, I could not explain that email right now. Please say email number one, repeat summary, or no to end the call."
+            try:
+                _record_interaction(db, call_log, transcript, INTENT_UNKNOWN, email_reference, confidence, safe_response)
+            except Exception:
+                logger.exception(
+                    "Failed to record fallback detail error for call_log_id=%s transcript=%r error=%s: %s",
+                    call_log.id,
+                    transcript[:180] if transcript else "",
+                    type(exc).__name__,
+                    exc,
+                )
+            return build_gather_prompt_twiml(call_log.id, safe_response)
 
     if intent == INTENT_END_CALL:
         system_response = "Okay, ending the call. Have a good day."

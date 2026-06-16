@@ -206,6 +206,41 @@ def test_twilio_speech_webhook_handles_phase9_intents() -> None:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
 
+def test_twilio_detail_phrases_map_to_first_email() -> None:
+    token = _login_token()
+    try:
+        phrases = [
+            "explain in detail email number 1",
+            "explain email number one",
+            "tell me details about first email",
+            "details of email 1",
+            "read detailed summary for first email",
+        ]
+        for phrase in phrases:
+            call_log_id, summary_ids, message_ids = _create_voice_test_call()
+            headers = {"Authorization": f"Bearer {token}"}
+            db = SessionLocal()
+            try:
+                provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+            finally:
+                db.close()
+            response = client.post(
+                f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+                data={"SpeechResult": phrase, "Confidence": "0.94", "CallSid": provider_call_id},
+            )
+            assert response.status_code == 200, response.text
+            assert "Gather" in response.text
+            assert "Do you want another email explained" in response.text
+
+            interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+            assert interactions.status_code == 200, interactions.text
+            payload = interactions.json()
+            assert any(item["detected_intent"] == "DETAIL_EMAIL" and item["email_reference"] == 1 for item in payload)
+            _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+    finally:
+        pass
+
+
 def test_twilio_speech_webhook_handles_phase10_lookup_phrases() -> None:
     token = _login_token()
     call_log_id, summary_ids, message_ids = _create_voice_test_call()
@@ -243,6 +278,33 @@ def test_twilio_speech_webhook_handles_phase10_lookup_phrases() -> None:
         payload = interactions.json()
         assert len(payload) >= 3
         assert any(item["detected_intent"] == "DETAIL_EMAIL" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_twilio_detail_phrase_invalid_reference_returns_helpful_message() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        db = SessionLocal()
+        try:
+            provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        finally:
+            db.close()
+
+        response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "explain email number 9", "Confidence": "0.94", "CallSid": provider_call_id},
+        )
+        assert response.status_code == 200, response.text
+        assert "Email number not found" in response.text or "between one and five" in response.text
+        assert "application error" not in response.text.lower()
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "UNKNOWN" for item in payload)
     finally:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
