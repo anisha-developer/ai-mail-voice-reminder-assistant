@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from email.utils import parseaddr
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -17,6 +19,7 @@ from app.services.email_summarization_service import summary_to_item
 
 MAX_MAIL_SUMMARY_CALLS_PER_DAY = 3
 DEFAULT_SLOT_TIMES = ("09:00", "13:00", "19:00")
+EMAIL_ADDRESS_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
 def _user_timezone(user: User) -> ZoneInfo:
@@ -49,6 +52,64 @@ def _parse_summary_ids(payload: str | None) -> list[int]:
     if isinstance(data, list):
         return [int(item) for item in data]
     return []
+
+
+def _spoken_sender_name(sender: str | None) -> str:
+    raw = (sender or "").strip()
+    if not raw:
+        return "Unknown sender"
+    display_name, _ = parseaddr(raw)
+    if display_name.strip():
+        return display_name.strip()
+    if "<" in raw and ">" in raw:
+        prefix = raw.split("<", 1)[0].strip()
+        if prefix:
+            return prefix
+    return "Unknown sender"
+
+
+def _spoken_subject(subject: str | None) -> str:
+    text = (subject or "No subject").strip() or "No subject"
+    for prefix in ("re:", "fwd:"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):].strip()
+    return text or "No subject"
+
+
+def _shorten_voice_text(text: str, max_sentences: int = 2, max_chars: int = 320) -> str:
+    cleaned = EMAIL_ADDRESS_RE.sub("the sender", (text or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", cleaned) if part.strip()]
+    if sentences:
+        shortened = " ".join(sentences[:max_sentences]).strip()
+    else:
+        shortened = cleaned
+    if len(shortened) > max_chars:
+        shortened = shortened[:max_chars].rsplit(" ", 1)[0].rstrip(".,;:")
+    return shortened.strip()
+
+
+def _voice_summary_text(summary: EmailSummary) -> str:
+    detailed = (summary.detailed_summary or "").strip()
+    short = (summary.short_summary or "").strip()
+    source_text = detailed or short
+    if not source_text:
+        subject = _spoken_subject(summary.subject)
+        return f"Email received about {subject}. It may need review."
+
+    if detailed:
+        source_text = _shorten_voice_text(source_text, max_sentences=2, max_chars=320)
+    else:
+        source_text = EMAIL_ADDRESS_RE.sub("the sender", source_text)
+        source_text = re.sub(r"\s+", " ", source_text).strip()
+
+    if source_text.lower().startswith("this email is from ") or source_text.lower().startswith("indha email "):
+        subject = _spoken_subject(summary.subject)
+        return f"Email received about {subject}. It may need review based on the subject and sender."
+
+    return source_text or f"Email received about {_spoken_subject(summary.subject)}. It may need review."
 
 
 def _current_slot_times(db: Session, user_id: int) -> set[str]:
@@ -145,8 +206,8 @@ def _script_for_summaries(summaries: list[EmailSummary]) -> str:
     for index, summary in enumerate(summaries, start=1):
         parts.extend(
             [
-                f"Email {index}. From {summary.sender or 'Unknown sender'}. Subject: {summary.subject or 'No subject'}.",
-                f"Summary: {summary.short_summary or 'Summary not available.'}",
+                f"Email {index}. From {_spoken_sender_name(summary.sender)}. Subject: {_spoken_subject(summary.subject)}.",
+                f"Summary: {_voice_summary_text(summary)}",
                 "",
             ]
         )

@@ -74,6 +74,7 @@ MAX_DETAIL_REQUESTS = 2
 MAX_REPEAT_REQUESTS = 1
 MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
+EMAIL_ADDRESS_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +86,11 @@ def _spoken_sender_name(sender: str | None) -> str:
     display_name, email_addr = parseaddr(raw)
     if display_name.strip():
         return display_name.strip()
-    if "@" in email_addr:
-        return email_addr.strip()
     if "<" in raw and ">" in raw:
         return raw.split("<", 1)[0].strip() or raw
-    return raw
+    if "@" in email_addr:
+        return "Unknown sender"
+    return raw or "Unknown sender"
 
 
 def _spoken_subject(subject: str | None) -> str:
@@ -98,6 +99,27 @@ def _spoken_subject(subject: str | None) -> str:
         if text.lower().startswith(prefix):
             text = text[len(prefix):].strip()
     return text or "No subject"
+
+
+def _voice_summary_text(summary: EmailSummary) -> str:
+    detailed = (summary.detailed_summary or "").strip()
+    short = (summary.short_summary or "").strip()
+    source_text = detailed or short
+    if not source_text:
+        return "Summary not available."
+
+    source_text = EMAIL_ADDRESS_RE.sub("the sender", source_text)
+    source_text = re.sub(r"\s+", " ", source_text).strip()
+    if detailed:
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", source_text) if part.strip()]
+        if sentences:
+            source_text = " ".join(sentences[:2]).strip()
+        if len(source_text) > 320:
+            source_text = source_text[:320].rsplit(" ", 1)[0].rstrip(".,;:")
+    if source_text.lower().startswith("this email is from ") or source_text.lower().startswith("indha email "):
+        subject = _spoken_subject(summary.subject)
+        return f"Email received about {subject}. It may need review based on the subject and sender."
+    return source_text or "Summary not available."
 
 
 def _recurring_payload_is_ready(smart_resolution) -> bool:
@@ -354,9 +376,9 @@ def build_testable_call_script(db: Session, call_log: MailSummaryCallLog, max_it
             " ".join(
                 [
                     f"Email {index}.",
-                    f"From {summary.sender or 'Unknown sender'}.",
-                    f"Subject: {summary.subject or 'No subject'}.",
-                    f"Summary: {summary.short_summary or 'Summary not available.'}",
+                    f"From {_spoken_sender_name(summary.sender)}.",
+                    f"Subject: {_spoken_subject(summary.subject)}.",
+                    f"Summary: {_voice_summary_text(summary)}",
                 ]
             )
         )

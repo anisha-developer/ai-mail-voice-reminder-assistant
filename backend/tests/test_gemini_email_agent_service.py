@@ -17,10 +17,11 @@ def _sample_email() -> SimpleNamespace:
 def test_generate_understanding_summary_english_mocked(monkeypatch) -> None:
     monkeypatch.setattr(settings, "email_summary_provider", "gemini", raising=False)
     monkeypatch.setattr(settings, "gemini_api_key", "test-key", raising=False)
+    captured = {"prompt": ""}
     monkeypatch.setattr(
         gemini_service,
         "_call_gemini",
-        lambda prompt: {
+        lambda prompt: captured.__setitem__("prompt", prompt) or {
             "short_summary": "The email asks for review and a reply.",
             "important_points": ["review", "reply tomorrow"],
             "action_required": "Reply is needed.",
@@ -43,6 +44,9 @@ def test_generate_understanding_summary_english_mocked(monkeypatch) -> None:
     assert result["action_required"] == "Reply is needed."
     assert result["reply_needed"] is True
     assert result["language_used"] == "english"
+    assert "purpose or meaning" in captured["prompt"]
+    assert "Do not just copy the email" in captured["prompt"]
+    assert "1 to 2 clear sentences" in captured["prompt"]
 
 
 def test_generate_understanding_summary_tanglish_mocked(monkeypatch) -> None:
@@ -177,7 +181,7 @@ def test_missing_api_key_falls_back_without_calling_gemini(monkeypatch) -> None:
     )
 
     assert called["value"] is False
-    assert "Sender" in result["short_summary"]
+    assert "review" in result["short_summary"].lower() or "email received about" in result["short_summary"].lower()
 
 
 def test_gemini_failure_falls_back(monkeypatch) -> None:
@@ -192,7 +196,8 @@ def test_gemini_failure_falls_back(monkeypatch) -> None:
         preferred_language="english",
     )
 
-    assert "Sender" in result["detailed_explanation"]
+    assert "Email received about Hello" in result["detailed_explanation"]
+    assert "review" in result["detailed_explanation"].lower()
 
 
 def test_empty_email_content_falls_back(monkeypatch) -> None:

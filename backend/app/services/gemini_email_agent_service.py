@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from email.utils import parseaddr
 from urllib import error, request
 
 from app.config import settings
@@ -26,15 +27,30 @@ def _body_text(body: str | None) -> str:
     return cleaned[:4000] if cleaned else ""
 
 
+def _sender_label(sender: str | None) -> str:
+    sender_text = _clean_text(sender)
+    if not sender_text:
+        return "Unknown sender"
+    display_name, _ = parseaddr(sender_text)
+    if display_name.strip():
+        return display_name.strip()
+    if "<" in sender_text and ">" in sender_text:
+        prefix = sender_text.split("<", 1)[0].strip()
+        if prefix:
+            return prefix
+    return "Unknown sender"
+
+
 def _default_summary_payload(subject: str | None, sender: str | None, body: str | None, language: str) -> dict[str, Any]:
     subject_text = _clean_text(subject) or "No subject"
-    sender_text = _clean_text(sender) or "Unknown sender"
     body_text = _body_text(body)
-    summary_base = f"This email is from {sender_text} about {subject_text}."
+    summary_base = f"Email received about {subject_text}. It may need review based on the message content."
     if language == "tamil":
-        summary_base = f"Follow up from {sender_text} about {subject_text}."
+        summary_base = f"Email received about {subject_text}. It may need review based on the message content."
     elif language == "tanglish":
-        summary_base = f"Indha email {sender_text} kitta irundhu {subject_text} pathi vandhurukku."
+        summary_base = f"Indha email {subject_text} pathi vandhurukku. Message content-a paathu review panna vendiyadhu."
+    if body_text:
+        summary_base = f"{summary_base} {body_text[:120]}".strip()
     important_points = [subject_text]
     if body_text:
         important_points.append(body_text[:120])
@@ -51,14 +67,13 @@ def _default_summary_payload(subject: str | None, sender: str | None, body: str 
 
 def _default_detail_payload(subject: str | None, sender: str | None, body: str | None, language: str) -> dict[str, Any]:
     subject_text = _clean_text(subject) or "No subject"
-    sender_text = _clean_text(sender) or "Unknown sender"
     body_text = _body_text(body)
     if language == "tamil":
-        explanation = f"Follow up from {sender_text} about {subject_text}."
+        explanation = f"Email received about {subject_text}. It may need review."
     elif language == "tanglish":
-        explanation = f"Indha email {sender_text} kitta irundhu {subject_text} pathi vandhurukku."
+        explanation = f"Indha email {subject_text} pathi vandhurukku. Review panna vendiya message."
     else:
-        explanation = f"This email is from {sender_text} about {subject_text}."
+        explanation = f"Email received about {subject_text}. It may need review based on the message content."
     if body_text:
         explanation = f"{explanation} Details: {body_text[:220]}"
     return {
