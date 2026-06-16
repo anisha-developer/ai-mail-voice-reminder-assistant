@@ -75,6 +75,9 @@ MAX_REPEAT_REQUESTS = 1
 MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
 EMAIL_ADDRESS_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+FORWARDED_BLOCK_RE = re.compile(r"(?is)-{3,}\s*forwarded message\s*-{3,}.*?(?=\n\s*\n|\Z)")
+HEADER_LINE_RE = re.compile(r"(?im)^\s*(from|date|subject|to|cc|bcc|sent):\s*.*$")
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +104,39 @@ def _spoken_subject(subject: str | None) -> str:
     return text or "No subject"
 
 
+def _sanitize_voice_text(text: str, *, max_chars: int = 320) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = FORWARDED_BLOCK_RE.sub(" ", cleaned)
+    cleaned = HEADER_LINE_RE.sub(" ", cleaned)
+    cleaned = URL_RE.sub(" ", cleaned)
+    cleaned = EMAIL_ADDRESS_RE.sub("the sender", cleaned)
+    cleaned = cleaned.replace("<", " ").replace(">", " ")
+    cleaned = re.sub(r"-{4,}", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", cleaned) if part.strip()]
+    if sentences:
+        cleaned = " ".join(sentences[:2]).strip()
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars].rsplit(" ", 1)[0].rstrip(".,;: ")
+    return cleaned.strip()
+
+
+def _detail_text_looks_raw_forwarded(text: str | None) -> bool:
+    cleaned = (text or "").lower()
+    if not cleaned:
+        return False
+    return (
+        "forwarded message" in cleaned
+        or "----------" in cleaned
+        or "from:" in cleaned and "date:" in cleaned
+        or "subject:" in cleaned and "to:" in cleaned
+    )
+
+
 def _voice_summary_text(summary: EmailSummary) -> str:
     detailed = (summary.detailed_summary or "").strip()
     short = (summary.short_summary or "").strip()
@@ -108,14 +144,7 @@ def _voice_summary_text(summary: EmailSummary) -> str:
     if not source_text:
         return "Summary not available."
 
-    source_text = EMAIL_ADDRESS_RE.sub("the sender", source_text)
-    source_text = re.sub(r"\s+", " ", source_text).strip()
-    if detailed:
-        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", source_text) if part.strip()]
-        if sentences:
-            source_text = " ".join(sentences[:2]).strip()
-        if len(source_text) > 320:
-            source_text = source_text[:320].rsplit(" ", 1)[0].rstrip(".,;:")
+    source_text = _sanitize_voice_text(source_text)
     if source_text.lower().startswith("this email is from ") or source_text.lower().startswith("indha email "):
         subject = _spoken_subject(summary.subject)
         return f"Email received about {subject}. It may need review based on the subject and sender."
@@ -440,14 +469,25 @@ def _safe_detail_voice_text(summary: EmailSummary | None, detail_text: str | Non
     sender = _spoken_sender_name(summary.sender if summary else None)
     cleaned_detail = (detail_text or "").strip()
     if cleaned_detail:
-        return cleaned_detail
+        if _detail_text_looks_raw_forwarded(cleaned_detail):
+            logger.info(
+                "Detail summary looked like forwarded/raw content; falling back to safe voice text for subject=%r sender=%r",
+                subject,
+                sender,
+            )
+        else:
+            sanitized = _sanitize_voice_text(cleaned_detail)
+            if sanitized:
+                return sanitized
     summary_text = ""
     if summary is not None:
         summary_text = (summary.short_summary or summary.action_required_text or "").strip()
-        if summary_text.lower().startswith("this email is from "):
+        if summary_text.lower().startswith("this email is from ") or summary_text.lower().startswith("indha email "):
             summary_text = ""
     if summary_text:
-        return f"Detailed explanation is not available for this email, but here is the summary: {summary_text}"
+        sanitized_summary = _sanitize_voice_text(summary_text)
+        if sanitized_summary:
+            return f"Detailed explanation is not available for this email, but here is the summary: {sanitized_summary}"
     return f"Detailed explanation is not available for this email from {sender} about {subject}."
 
 
