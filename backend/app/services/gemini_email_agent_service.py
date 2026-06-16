@@ -173,7 +173,9 @@ def _prompt_intro(language: str) -> str:
         "You are the understanding brain for an email assistant. "
         "Understand the email meaning. Do not just copy the email. "
         "Identify purpose, important points, action needed, deadline/date/time if present, and whether reply or reminder is useful. "
-        "Use simple user-friendly words. Do not invent facts. If unclear, say unclear. "
+        "Write in a voice-friendly way using simple user-friendly words. "
+        "For short summaries, use 1 to 2 clear sentences. For detailed explanations, use 3 to 5 useful sentences. "
+        "Do not use awkward phrases like 'kitta irundhu'. Do not invent facts. If unclear, say unclear. "
         "Do not give medical or diet advice unless the email explicitly contains such content. "
         f"Return only JSON. Use selected language: {language}."
     )
@@ -216,6 +218,7 @@ def generate_understanding_summary(
     prompt = (
         f"{_prompt_intro(language)}\n"
         "Task: create a concise understanding summary.\n"
+        "Make the summary useful for a phone call. Explain the purpose or meaning of the email, not just the sender and subject.\n"
         f"Subject: {_clean_text(subject) or 'No subject'}\n"
         f"Sender: {_clean_text(sender) or 'Unknown sender'}\n"
         f"Body: {_body_text(body) or 'Email body was empty.'}\n"
@@ -240,6 +243,7 @@ def generate_detailed_explanation(
     prompt = (
         f"{_prompt_intro(language)}\n"
         "Task: create a detailed explanation that is still voice-friendly.\n"
+        "Explain the meaning clearly in 3 to 5 simple sentences. Mention any action, deadline, or reminder value if present.\n"
         f"Subject: {_clean_text(subject) or 'No subject'}\n"
         f"Sender: {_clean_text(sender) or 'Unknown sender'}\n"
         f"Body: {_body_text(body) or 'Email body was empty.'}\n"

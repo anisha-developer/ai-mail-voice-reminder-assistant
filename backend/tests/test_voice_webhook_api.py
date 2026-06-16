@@ -247,6 +247,39 @@ def test_twilio_speech_webhook_handles_phase10_lookup_phrases() -> None:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
 
+def test_twilio_speech_webhook_uses_safe_detail_fallback_when_detailed_summary_missing() -> None:
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    db = SessionLocal()
+    try:
+        summary = db.query(EmailSummary).filter(EmailSummary.id == summary_ids[0]).first()
+        assert summary is not None
+        summary.detailed_summary = None
+        summary.short_summary = "This reminder mail needs review."
+        summary.action_required_text = "No clear action requested."
+        db.add(summary)
+        db.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        provider_call_id = db.query(MailSummaryCallLog.provider_call_id).filter(MailSummaryCallLog.id == call_log_id).scalar()
+        assert provider_call_id
+        response = client.post(
+            f"/voice/webhooks/twilio/speech?call_log_id={call_log_id}",
+            data={"SpeechResult": "explain email number 1", "Confidence": "0.95", "CallSid": provider_call_id},
+        )
+        assert response.status_code == 200, response.text
+        assert "Gather" in response.text
+        assert "Detailed explanation is not available" in response.text or "This reminder mail needs review" in response.text
+
+        interactions = client.get(f"/voice/mail-calls/{call_log_id}/interactions", headers=headers)
+        assert interactions.status_code == 200, interactions.text
+        payload = interactions.json()
+        assert any(item["detected_intent"] == "DETAIL_EMAIL" for item in payload)
+    finally:
+        db.close()
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
 def test_twilio_speech_webhook_handles_phase11_reply_flow(monkeypatch) -> None:
     token = _login_token()
     call_log_id, summary_ids, message_ids = _create_voice_test_call()

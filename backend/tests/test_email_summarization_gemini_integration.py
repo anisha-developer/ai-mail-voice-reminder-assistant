@@ -153,3 +153,55 @@ def test_fallback_used_when_gemini_fails(monkeypatch) -> None:
         if email is not None:
             _cleanup_email(db, email)
         db.close()
+
+
+def test_fallback_summary_is_voice_friendly_when_provider_disabled(monkeypatch) -> None:
+    db = SessionLocal()
+    email = None
+    try:
+        user = db.query(User).filter(User.email == "browsertest@example.com").first()
+        assert user is not None
+        email = _create_email(db, user, "friendly")
+        email.subject = "Gentil hospital reminder"
+        email.sender = "Gentil hospital <reminder@gentilhospital.example>"
+        email.plain_body = "Please review your hospital follow-up reminder."
+        db.add(email)
+        db.commit()
+
+        monkeypatch.setattr(settings, "email_summary_provider", "existing", raising=False)
+        monkeypatch.setattr(settings, "gemini_api_key", "", raising=False)
+
+        result = summary_service.summarize_email_ids(db, user, [email.id])
+        summary = db.query(EmailSummary).filter(EmailSummary.email_message_id == email.id).first()
+
+        assert result["success_count"] == 1
+        assert summary is not None
+        assert summary.short_summary
+        assert "Gentil hospital" in summary.short_summary or "Email received about" in summary.short_summary
+        assert "follow-up" in summary.detailed_summary.lower()
+        assert "from" not in summary.short_summary.lower() or "email received about" in summary.short_summary.lower()
+    finally:
+        if email is not None:
+            _cleanup_email(db, email)
+        db.close()
+
+
+def test_gemini_failure_logs_safe_fallback(monkeypatch, caplog) -> None:
+    db = SessionLocal()
+    email = None
+    try:
+        user = db.query(User).filter(User.email == "browsertest@example.com").first()
+        assert user is not None
+        email = _create_email(db, user, "log")
+        monkeypatch.setattr(settings, "email_summary_provider", "gemini", raising=False)
+        monkeypatch.setattr(settings, "gemini_api_key", "test-key", raising=False)
+        monkeypatch.setattr(summary_service, "generate_understanding_summary", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        with caplog.at_level("WARNING"):
+            summary_service.summarize_email_ids(db, user, [email.id])
+
+        assert any("Gemini summary fallback used" in record.message for record in caplog.records)
+    finally:
+        if email is not None:
+            _cleanup_email(db, email)
+        db.close()

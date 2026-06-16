@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from email.utils import parseaddr
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -75,6 +76,28 @@ MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
 
 logger = logging.getLogger(__name__)
+
+
+def _spoken_sender_name(sender: str | None) -> str:
+    raw = (sender or "").strip()
+    if not raw:
+        return "Unknown sender"
+    display_name, email_addr = parseaddr(raw)
+    if display_name.strip():
+        return display_name.strip()
+    if "@" in email_addr:
+        return email_addr.strip()
+    if "<" in raw and ">" in raw:
+        return raw.split("<", 1)[0].strip() or raw
+    return raw
+
+
+def _spoken_subject(subject: str | None) -> str:
+    text = (subject or "No subject").strip() or "No subject"
+    for prefix in ("re:", "fwd:"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):].strip()
+    return text or "No subject"
 
 
 def _recurring_payload_is_ready(smart_resolution) -> bool:
@@ -388,6 +411,22 @@ def build_detail_email_twiml(call_log_id: int, detail_text: str) -> str:
         detail_text,
         "Do you want another email explained, or should I end the call?",
     )
+
+
+def _safe_detail_voice_text(summary: EmailSummary | None, detail_text: str | None) -> str:
+    subject = _spoken_subject(summary.subject if summary else None)
+    sender = _spoken_sender_name(summary.sender if summary else None)
+    cleaned_detail = (detail_text or "").strip()
+    if cleaned_detail:
+        return cleaned_detail
+    summary_text = ""
+    if summary is not None:
+        summary_text = (summary.short_summary or summary.action_required_text or "").strip()
+        if summary_text.lower().startswith("this email is from "):
+            summary_text = ""
+    if summary_text:
+        return f"Detailed explanation is not available for this email, but here is the summary: {summary_text}"
+    return f"Detailed explanation is not available for this email from {sender} about {subject}."
 
 
 def build_repeat_summary_twiml(db: Session, call_log: MailSummaryCallLog) -> str:
@@ -847,7 +886,7 @@ def process_twilio_speech_webhook(
 
         summary = resolved.get("email_summary")
         matched_reference = resolved.get("email_reference") or email_reference
-        detail_text = getattr(summary, "detailed_summary", None) or "No detailed summary is available for that email."
+        detail_text = _safe_detail_voice_text(summary, getattr(summary, "detailed_summary", None))
         system_response = (
             f"Email {matched_reference}. {detail_text} "
             "You can say: remind me about this email in two minutes. Or say: reply to this email. Or say: no to end the call."

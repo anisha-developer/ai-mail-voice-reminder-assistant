@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib import error, request
 from zoneinfo import ZoneInfo
@@ -14,6 +15,9 @@ from app.models.email_summary import EmailSummary
 from app.models.user import User
 from app.core.timezone import normalize_timezone_name
 from app.services.gemini_email_agent_service import generate_understanding_summary
+
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_text(value: str | None, fallback: str = "") -> str:
@@ -56,9 +60,20 @@ def _extract_action_required(email: EmailMessage) -> str:
 def _mock_summary(email: EmailMessage) -> dict[str, str]:
     sender = email.sender or "Unknown sender"
     subject = email.subject or "No subject"
+    body = _first_safe_portion(email)
+    summary_hint = subject.lower()
+    if any(keyword in summary_hint for keyword in ["hospital", "appointment", "follow-up", "follow up", "reminder"]):
+        short_summary = f"{subject} related reminder mail vandhurukku. Review panna vendiya follow-up mail."
+        detailed_summary = f"{subject} related reminder mail vandhurukku. Idhu appointment or follow-up related mail. {body}"
+    elif any(keyword in summary_hint for keyword in ["quora", "notification", "update"]):
+        short_summary = f"{subject} related notification mail vandhurukku. Review panna podhum."
+        detailed_summary = f"{subject} related notification mail vandhurukku. Idhu account activity or content update related mail. {body}"
+    else:
+        short_summary = f"Email received about {subject}. It may need review based on the subject and sender."
+        detailed_summary = f"Email received about {subject}. It looks like a message from {sender}. {body}"
     return {
-        "short_summary": f"This email is from {sender} about {subject}.",
-        "detailed_summary": f"This email contains the following content: {_first_safe_portion(email)}",
+        "short_summary": short_summary,
+        "detailed_summary": detailed_summary,
         "action_required_text": _extract_action_required(email),
         "attachment_note": _attachment_note(email),
     }
@@ -149,8 +164,11 @@ def _gemini_summary(email: EmailMessage) -> dict[str, str]:
     detailed_summary = " ".join(part for part in detail_parts if part).strip()
     if not detailed_summary:
         detailed_summary = _first_safe_portion(email)
+    short_summary = str(generated.get("short_summary") or "").strip()
+    if short_summary and short_summary.lower().startswith("this email is from ") and email.subject:
+        short_summary = f"Email received about {email.subject}. It may need review based on the subject and sender."
     return {
-        "short_summary": str(generated.get("short_summary") or _mock_summary(email)["short_summary"]).strip(),
+        "short_summary": short_summary or _mock_summary(email)["short_summary"],
         "detailed_summary": detailed_summary,
         "action_required_text": "No clear action requested." if not action_required or action_required.lower() == "unclear" else action_required,
         "attachment_note": _attachment_note(email),
@@ -163,7 +181,18 @@ def _generate_summary(email: EmailMessage) -> dict[str, str]:
         try:
             return _gemini_summary(email)
         except Exception:
+            logger.warning(
+                "Gemini summary fallback used for email_id=%s subject=%s; using legacy summary",
+                getattr(email, "id", None),
+                (email.subject or "No subject")[:120],
+            )
             return _legacy_generate_summary(email)
+    if provider == "gemini" and not settings.gemini_api_key:
+        logger.warning(
+            "Gemini summary skipped because GEMINI_API_KEY is missing for email_id=%s subject=%s",
+            getattr(email, "id", None),
+            (email.subject or "No subject")[:120],
+        )
     return _legacy_generate_summary(email)
 
 
