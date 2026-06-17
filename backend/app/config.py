@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     elevenlabs_agent_id: str = ""
     elevenlabs_phone_number_id: str = ""
     make_agent_webhook_url: str = ""
+    make_elevenlabs_webhook_url: str = ""
+    mail_call_provider: str = "twilio"
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_phone: str = ""
