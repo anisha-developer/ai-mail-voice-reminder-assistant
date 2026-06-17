@@ -142,9 +142,11 @@ def test_payload_shape_and_sanitization(monkeypatch) -> None:
         assert result["provider"] == "make"
         assert captured["url"] == "https://example.com/webhook"
         payload = captured["json"]
-        assert set(payload.keys()) == {"user_name", "preferred_language", "call_purpose", "total_emails", "call_id", "emails_json"}
+        assert set(payload.keys()) == {"user_name", "preferred_language", "call_purpose", "total_emails", "mail_call_id", "call_id", "emails_json"}
         assert payload["call_purpose"] == "daily_mail_summary"
         assert payload["total_emails"] == 1
+        assert payload["mail_call_id"] == call_log_id
+        assert payload["call_id"] == call_log_id
         emails = json.loads(payload["emails_json"])
         assert len(emails) == 1
         assert emails[0]["sender_name"] == "Portfolio Contact Form"
@@ -195,6 +197,7 @@ def test_successful_make_post(monkeypatch) -> None:
         result = send_mail_summary_call_to_make(db, user, call_log)
         assert result["success"] is True
         assert result["status"] == "queued"
+        assert result["payload"]["mail_call_id"] == call_log_id
     finally:
         db.close()
         _cleanup(call_log_id, summary_id, message_id)
@@ -220,6 +223,7 @@ def test_make_failure_falls_back_safely(monkeypatch) -> None:
         assert result["success"] is False
         assert result["status"] == "failed"
         assert "could not be sent" in result["message"].lower()
+        assert result["payload"]["mail_call_id"] == call_log_id
     finally:
         db.close()
         _cleanup(call_log_id, summary_id, message_id)
@@ -250,6 +254,7 @@ def test_no_raw_body_or_full_email_addresses_in_emails_json(monkeypatch) -> None
         result = send_mail_summary_call_to_make(db, user, call_log)
         assert result["success"] is True
         emails_json = captured["json"]["emails_json"]
+        assert captured["json"]["mail_call_id"] == call_log_id
         assert "Portfolio Contact Form <notify+abc@example.com>" not in emails_json
         assert "notify+abc@example.com" not in emails_json
         assert "Forwarded message" not in emails_json

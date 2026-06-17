@@ -60,6 +60,8 @@ Use this exact Make.com webhook for every tool:
 
 If your local backend uses a different value, confirm it matches `backend/.env` before testing.
 
+ElevenLabs dynamic variables should include both `mail_call_id` and `call_id`. Make.com should pass the backend `mail_call_id` field through unchanged so the reply tool can address the correct mail summary call later.
+
 ## Tool list
 
 Configure the ElevenLabs agent with the following tools and descriptions.
@@ -76,6 +78,7 @@ Configure the ElevenLabs agent with the following tools and descriptions.
 {
   "action": "get_today_summaries",
   "user_id": 2,
+  "mail_call_id": "elevenlabs-test",
   "call_id": "elevenlabs-test"
 }
 ```
@@ -92,6 +95,7 @@ Configure the ElevenLabs agent with the following tools and descriptions.
 {
   "action": "get_email_detail",
   "user_id": 2,
+  "mail_call_id": "elevenlabs-test",
   "call_id": "elevenlabs-test",
   "email_reference": 1
 }

@@ -107,7 +107,7 @@ def test_elevenlabs_provider_switch_uses_elevenlabs(monkeypatch) -> None:
     db = SessionLocal()
     try:
         monkeypatch.setattr(settings, "mail_call_provider", "make_elevenlabs", raising=False)
-        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, call_log, summaries=None: {"success": True, "provider": "make", "status": "queued", "message": "ok", "payload": {}})
+        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, call_log, summaries=None: {"success": True, "provider": "make", "status": "queued", "message": "ok", "payload": {"mail_call_id": call_log.id, "call_id": call_log.id}})
 
         result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
         assert result["provider"] == "make_elevenlabs"
@@ -200,7 +200,7 @@ def test_make_provider_failure_does_not_crash(monkeypatch) -> None:
     db = SessionLocal()
     try:
         monkeypatch.setattr(settings, "mail_call_provider", "make_elevenlabs", raising=False)
-        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, _call_log, summaries=None: {"success": False, "provider": "make", "status": "failed", "message": "Webhook failed", "payload": {}})
+        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, call_log, summaries=None: {"success": False, "provider": "make", "status": "failed", "message": "Webhook failed", "payload": {"mail_call_id": call_log.id, "call_id": call_log.id}})
 
         result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
         assert result["provider"] == "make_elevenlabs"

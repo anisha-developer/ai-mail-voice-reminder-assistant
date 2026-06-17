@@ -144,6 +144,7 @@ def _build_payload(user: User, call_log: MailSummaryCallLog, summaries: list[Ema
         "preferred_language": preferred_language,
         "call_purpose": "daily_mail_summary",
         "total_emails": len(clean_items),
+        "mail_call_id": call_log.id,
         "call_id": call_log.id,
         "emails_json": json.dumps(clean_items, ensure_ascii=False),
     }
