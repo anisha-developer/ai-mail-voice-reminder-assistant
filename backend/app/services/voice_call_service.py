@@ -33,6 +33,7 @@ from app.services.voice_reminder_service import (
 from app.services.mail_summary_call_service import mark_mail_call_delivered
 from app.services.gmail_reply_service import cancel_reply, get_active_reply_session, send_reply, start_reply_session, update_reply_body
 from app.services.elevenlabs_service import start_mail_summary_call_with_elevenlabs
+from app.services.make_elevenlabs_call_service import send_mail_summary_call_to_make
 from app.services.voice_email_lookup_service import get_last_explained_email_for_call, resolve_email_reference_for_call
 from app.services.voice_intent_service import (
     INTENT_DETAIL_EMAIL,
@@ -255,7 +256,74 @@ def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> 
     if not call_log.script_text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prepared call script is missing")
 
-    provider = (settings.voice_agent_provider or VOICE_PROVIDER_TWILIO).strip().lower()
+    provider = (settings.mail_call_provider or VOICE_PROVIDER_TWILIO).strip().lower()
+    if provider == "make_elevenlabs":
+        try:
+            make_result = send_mail_summary_call_to_make(db, user, call_log)
+        except Exception as exc:
+            logger.exception(
+                "Make ElevenLabs provider crashed for mail summary call_log_id=%s error=%s: %s",
+                call_log.id,
+                type(exc).__name__,
+                exc,
+            )
+            call_log.provider = "make_elevenlabs"
+            call_log.provider_call_id = None
+            call_log.to_phone_number = to_phone
+            call_log.from_phone_number = None
+            call_log.provider_status = "failed"
+            call_log.call_status = "failed"
+            call_log.delivery_status = "failed"
+            call_log.failure_reason = "Make ElevenLabs webhook failure"
+            call_log.provider_error_message = str(exc)
+            call_log.updated_at = datetime.now(timezone.utc)
+            db.add(call_log)
+            db.commit()
+            return {
+                "call_log_id": call_log.id,
+                "provider": "make_elevenlabs",
+                "provider_call_id": None,
+                "call_status": call_log.call_status,
+                "status": "failed",
+            }
+        if not make_result.get("success"):
+            call_log.provider = "make_elevenlabs"
+            call_log.provider_call_id = None
+            call_log.to_phone_number = to_phone
+            call_log.from_phone_number = None
+            call_log.provider_status = "failed"
+            call_log.call_status = "failed"
+            call_log.delivery_status = "failed"
+            call_log.failure_reason = make_result.get("message") or "Make ElevenLabs webhook failure"
+            call_log.provider_error_message = make_result.get("message") or "Make ElevenLabs webhook failure"
+            call_log.updated_at = datetime.now(timezone.utc)
+            db.add(call_log)
+            db.commit()
+            return {
+                "call_log_id": call_log.id,
+                "provider": "make_elevenlabs",
+                "provider_call_id": None,
+                "call_status": call_log.call_status,
+                "status": "failed",
+            }
+        provider_call_id = f"make-elevenlabs-{call_log.id}"
+        call_log.provider = "make_elevenlabs"
+        call_log.provider_call_id = provider_call_id
+        call_log.to_phone_number = to_phone
+        call_log.from_phone_number = None
+        call_log.provider_status = "queued"
+        call_log.call_status = "queued"
+        call_log.delivery_status = "pending"
+        call_log.updated_at = datetime.now(timezone.utc)
+        db.add(call_log)
+        db.commit()
+        return {
+            "call_log_id": call_log.id,
+            "provider": "make_elevenlabs",
+            "provider_call_id": provider_call_id,
+            "call_status": call_log.call_status,
+        }
+
     if provider == "elevenlabs":
         try:
             elevenlabs_result = start_mail_summary_call_with_elevenlabs(db, user, call_log)

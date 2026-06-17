@@ -106,18 +106,15 @@ def test_elevenlabs_provider_switch_uses_elevenlabs(monkeypatch) -> None:
     call_log_id, script_text = _prepared_call(user)
     db = SessionLocal()
     try:
-        monkeypatch.setattr(settings, "voice_agent_provider", "elevenlabs", raising=False)
-        monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
-        monkeypatch.setattr(settings, "elevenlabs_agent_id", "agent-123", raising=False)
-        monkeypatch.setattr(settings, "make_agent_webhook_url", "https://example.com/webhook", raising=False)
-        monkeypatch.setattr(voice_call_service, "start_mail_summary_call_with_elevenlabs", lambda _db, _user, call_log: {"provider": "elevenlabs", "provider_call_id": f"elevenlabs-{call_log.id}", "status": "queued"})
+        monkeypatch.setattr(settings, "mail_call_provider", "make_elevenlabs", raising=False)
+        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, call_log, summaries=None: {"success": True, "provider": "make", "status": "queued", "message": "ok", "payload": {}})
 
         result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
-        assert result["provider"] == "elevenlabs"
-        assert result["provider_call_id"] == f"elevenlabs-{call_log_id}"
+        assert result["provider"] == "make_elevenlabs"
+        assert result["provider_call_id"] == f"make-elevenlabs-{call_log_id}"
         refreshed = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
         assert refreshed is not None
-        assert refreshed.provider == "elevenlabs"
+        assert refreshed.provider == "make_elevenlabs"
         assert refreshed.call_status == "queued"
     finally:
         db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
@@ -131,10 +128,7 @@ def test_elevenlabs_provider_falls_back_to_twilio_when_unavailable(monkeypatch) 
     call_log_id, script_text = _prepared_call(user)
     db = SessionLocal()
     try:
-        monkeypatch.setattr(settings, "voice_agent_provider", "elevenlabs", raising=False)
-        monkeypatch.setattr(settings, "elevenlabs_api_key", "", raising=False)
-        monkeypatch.setattr(settings, "elevenlabs_agent_id", "", raising=False)
-        monkeypatch.setattr(settings, "make_agent_webhook_url", "", raising=False)
+        monkeypatch.setattr(settings, "mail_call_provider", "twilio", raising=False)
         monkeypatch.setattr(settings, "twilio_account_sid", "AC123", raising=False)
         monkeypatch.setattr(settings, "twilio_auth_token", "token", raising=False)
         monkeypatch.setattr(settings, "twilio_from_phone", "+17154196839", raising=False)
@@ -157,6 +151,65 @@ def test_elevenlabs_provider_falls_back_to_twilio_when_unavailable(monkeypatch) 
         result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
         assert result["provider"] == "twilio"
         assert result["provider_call_id"] == "CA-test-sid"
+    finally:
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_unknown_provider_falls_back_to_twilio(monkeypatch) -> None:
+    user = _user()
+    call_log_id, script_text = _prepared_call(user)
+    db = SessionLocal()
+    try:
+        monkeypatch.setattr(settings, "mail_call_provider", "unknown-provider", raising=False)
+        monkeypatch.setattr(settings, "twilio_account_sid", "AC123", raising=False)
+        monkeypatch.setattr(settings, "twilio_auth_token", "token", raising=False)
+        monkeypatch.setattr(settings, "twilio_from_phone", "+17154196839", raising=False)
+        monkeypatch.setattr(settings, "public_backend_url", "http://localhost:8000", raising=False)
+
+        class _CallStub:
+            sid = "CA-fallback-sid"
+            status = "queued"
+
+        class _CallsStub:
+            @staticmethod
+            def create(**_kwargs):
+                return _CallStub()
+
+        class _ClientStub:
+            def __init__(self, *_args, **_kwargs):
+                self.calls = _CallsStub()
+
+        monkeypatch.setattr(voice_call_service, "Client", _ClientStub)
+
+        result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
+        assert result["provider"] == "twilio"
+        assert result["provider_call_id"] == "CA-fallback-sid"
+    finally:
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_make_provider_failure_does_not_crash(monkeypatch) -> None:
+    user = _user()
+    call_log_id, script_text = _prepared_call(user)
+    db = SessionLocal()
+    try:
+        monkeypatch.setattr(settings, "mail_call_provider", "make_elevenlabs", raising=False)
+        monkeypatch.setattr(voice_call_service, "send_mail_summary_call_to_make", lambda _db, _user, _call_log, summaries=None: {"success": False, "provider": "make", "status": "failed", "message": "Webhook failed", "payload": {}})
+
+        result = voice_call_service.start_mail_summary_voice_call(db, user, call_log_id)
+        assert result["provider"] == "make_elevenlabs"
+        assert result["call_status"] == "failed"
+        assert result["provider_call_id"] is None
+        refreshed = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+        assert refreshed is not None
+        assert refreshed.call_status == "failed"
+        assert refreshed.delivery_status == "failed"
     finally:
         db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
