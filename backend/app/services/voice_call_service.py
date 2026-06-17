@@ -5,6 +5,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from email.utils import parseaddr
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -75,6 +76,7 @@ MAX_DETAIL_REQUESTS = 2
 MAX_REPEAT_REQUESTS = 1
 MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
+MAX_VOICE_REPLY_TEXT_LENGTH = 2000
 EMAIL_ADDRESS_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 FORWARDED_BLOCK_RE = re.compile(r"(?is)-{3,}\s*forwarded message\s*-{3,}.*?(?=\n\s*\n|\Z)")
@@ -706,6 +708,121 @@ def _summary_for_reference(db: Session, call_log: MailSummaryCallLog, email_refe
     if summary is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email number not found")
     return summary
+
+
+def process_voice_mail_reply_request(
+    db: Session,
+    call_log_id: int,
+    email_number: int | None,
+    reply_text: str | None,
+    confirmed: bool | None,
+    call_id: int | str | None = None,
+) -> dict[str, Any]:
+    del call_id
+    call_log = (
+        db.query(MailSummaryCallLog)
+        .filter(MailSummaryCallLog.id == call_log_id, MailSummaryCallLog.call_type == "mail_summary")
+        .first()
+    )
+    if call_log is None:
+        return {
+            "success": False,
+            "status": "invalid_call",
+            "message": "I could not find that mail summary call.",
+            "data": {},
+        }
+
+    if email_number is None or email_number < 1:
+        return {
+            "success": False,
+            "status": "invalid_email_number",
+            "message": "I could not find that email summary. Please ask for today's summaries again and choose one from the list.",
+            "data": {},
+        }
+
+    reply_body = (reply_text or "").strip()
+    if not reply_body:
+        return {
+            "success": False,
+            "status": "invalid_reply_text",
+            "message": "Please tell me what the reply should say.",
+            "data": {},
+        }
+    if len(reply_body) > MAX_VOICE_REPLY_TEXT_LENGTH:
+        return {
+            "success": False,
+            "status": "invalid_reply_text",
+            "message": "Please keep the reply shorter so I can send it safely.",
+            "data": {},
+        }
+
+    try:
+        summary = _summary_for_reference(db, call_log, email_number)
+    except HTTPException:
+        return {
+            "success": False,
+            "status": "invalid_email_number",
+            "message": "I could not find that email summary. Please ask for today's summaries again and choose one from the list.",
+            "data": {},
+        }
+
+    if not confirmed:
+        return {
+            "success": False,
+            "status": "confirmation_required",
+            "message": "Please confirm before I send this reply.",
+            "data": {
+                "email_number": email_number,
+                "subject": _spoken_subject(summary.subject),
+            },
+        }
+
+    try:
+        session = start_reply_session(
+            db,
+            call_log.user,
+            call_log,
+            summary,
+            reply_body=reply_body,
+            target_email_reference=email_number,
+        )
+        send_reply(db, call_log.user, session)
+    except HTTPException as exc:
+        logger.warning(
+            "Voice mail reply failed call_log_id=%s email_number=%s error=%s",
+            call_log_id,
+            email_number,
+            exc.detail,
+        )
+        return {
+            "success": False,
+            "status": "failed",
+            "message": str(exc.detail),
+            "data": {},
+        }
+    except Exception as exc:
+        logger.exception(
+            "Voice mail reply failed call_log_id=%s email_number=%s error=%s: %s",
+            call_log_id,
+            email_number,
+            type(exc).__name__,
+            exc,
+        )
+        return {
+            "success": False,
+            "status": "failed",
+            "message": "I could not send that reply right now. Please try again later.",
+            "data": {},
+        }
+
+    return {
+        "success": True,
+        "status": "sent",
+        "message": "Done. I sent the reply.",
+        "data": {
+            "email_number": email_number,
+        },
+    }
 
 
 def _last_explained_email_reference(db: Session, call_log: MailSummaryCallLog) -> int | None:

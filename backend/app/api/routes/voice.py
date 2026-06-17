@@ -1,19 +1,27 @@
 import logging
+import secrets
 
-from fastapi import APIRouter, Depends, Form, Response
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.models.reminder import Reminder
-from app.schemas.mail_call import VoiceCallInteractionItem, VoiceCallStartResponse
+from app.schemas.mail_call import (
+    VoiceCallInteractionItem,
+    VoiceCallStartResponse,
+    VoiceMailCallReplyRequest,
+    VoiceMailCallReplyResponse,
+)
 from app.services.voice_call_service import (
     build_error_twiml,
     list_voice_call_interactions,
     mail_call_twiml,
     process_twilio_status_callback,
     process_twilio_speech_webhook,
+    process_voice_mail_reply_request,
     start_mail_summary_voice_call,
     voice_interaction_to_item,
 )
@@ -22,6 +30,14 @@ from app.services.reminder_voice_service import build_reminder_twiml
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 logger = logging.getLogger(__name__)
+
+
+def _verify_agent_key(x_agent_api_key: str | None) -> None:
+    configured_key = (settings.agent_tool_api_key or "").strip()
+    if not configured_key:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="AGENT_TOOL_API_KEY is not configured")
+    if not x_agent_api_key or not secrets.compare_digest(x_agent_api_key, configured_key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
 @router.post("/mail-calls/{call_log_id}/start", response_model=VoiceCallStartResponse)
@@ -87,6 +103,28 @@ def twilio_speech_webhook(
 def get_voice_interactions(call_log_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[VoiceCallInteractionItem]:
     interactions = list_voice_call_interactions(db, current_user, call_log_id)
     return [VoiceCallInteractionItem(**voice_interaction_to_item(item)) for item in interactions]
+
+
+@router.post("/mail-calls/{mail_call_id}/reply", response_model=VoiceMailCallReplyResponse)
+def post_mail_call_reply(
+    mail_call_id: int,
+    payload: VoiceMailCallReplyRequest,
+    x_agent_api_key: str | None = Header(default=None, alias="X-Agent-API-Key"),
+    db: Session = Depends(get_db),
+) -> VoiceMailCallReplyResponse:
+    _verify_agent_key(x_agent_api_key)
+    confirmed = payload.confirmed is True
+    if not confirmed and isinstance(payload.confirmed, str):
+        confirmed = payload.confirmed.strip().lower() in {"true", "1", "yes", "y", "on"}
+    result = process_voice_mail_reply_request(
+        db=db,
+        call_log_id=mail_call_id,
+        email_number=payload.email_number if isinstance(payload.email_number, int) else None,
+        reply_text=payload.reply_text,
+        confirmed=confirmed,
+        call_id=payload.call_id,
+    )
+    return VoiceMailCallReplyResponse(**result)
 
 
 def _reminder_twiml_response(reminder_id: int, db: Session) -> Response:

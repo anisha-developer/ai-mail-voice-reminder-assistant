@@ -1,6 +1,7 @@
 from datetime import date, datetime, time
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.summary import SummaryListItem
 
@@ -80,3 +81,59 @@ class VoiceCallInteractionItem(BaseModel):
     system_response_text: str | None = None
     interaction_order: int
     created_at: datetime
+
+
+class VoiceMailCallReplyRequest(BaseModel):
+    email_number: int | str | None = None
+    reply_text: str | None = None
+    confirmed: bool | str | None = False
+    call_id: int | str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_payload(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+
+        def _empty_to_none(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, str) and not value.strip():
+                return None
+            return value
+
+        def _to_int(value: Any) -> Any:
+            value = _empty_to_none(value)
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+                return int(value.strip())
+            return value
+
+        for key in ("email_number", "call_id"):
+            if key in values:
+                values[key] = _to_int(values[key])
+
+        if "reply_text" in values:
+            values["reply_text"] = _empty_to_none(values["reply_text"])
+
+        confirmed = values.get("confirmed")
+        if isinstance(confirmed, str):
+            normalized = confirmed.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                values["confirmed"] = True
+            elif normalized in {"false", "0", "no", "n", "off"}:
+                values["confirmed"] = False
+            elif not normalized:
+                values["confirmed"] = None
+
+        return values
+
+
+class VoiceMailCallReplyResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)

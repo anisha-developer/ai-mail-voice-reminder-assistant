@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.database.session import SessionLocal
 from app.main import app
 from app.models.email_message import EmailMessage
@@ -21,6 +22,7 @@ from app.services import voice_call_service
 
 
 client = TestClient(app)
+AGENT_KEY = "test-agent-tool-secret"
 
 
 def _login_token() -> str:
@@ -30,6 +32,10 @@ def _login_token() -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
+
+
+def _set_agent_key(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "agent_tool_api_key", AGENT_KEY, raising=False)
 
 
 def _create_voice_test_call() -> tuple[int, list[int], list[int]]:
@@ -434,6 +440,126 @@ def test_twilio_speech_webhook_handles_phase11_reply_flow(monkeypatch) -> None:
         assert any(item["detected_intent"] == "START_EMAIL_REPLY" for item in payload)
         assert any(item["detected_intent"] == "CAPTURE_REPLY_BODY" for item in payload)
         assert any(item["detected_intent"] == "CONFIRM_SEND_REPLY" for item in payload)
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_requires_confirmation(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        def _should_not_send(*args, **kwargs):  # pragma: no cover - safety guard
+            raise AssertionError("send_reply should not be called before confirmation")
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _should_not_send)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": False},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "confirmation_required"
+        assert "confirm" in payload["message"].lower()
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_sends_when_confirmed(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    captured: dict[str, object] = {}
+    try:
+        def _fake_send_reply(db, user, session):
+            captured["user_id"] = user.id
+            captured["session"] = session
+            return {"provider_message_id": "mock-provider-message-id"}
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _fake_send_reply)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["status"] == "sent"
+        assert payload["data"]["email_number"] == 1
+        session = captured.get("session")
+        assert session is not None
+        assert session.reply_body == "Thanks, I will review this."
+        assert session.target_email_reference == 1
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_invalid_email_number_fails_safely(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        called = {"value": False}
+
+        def _should_not_send(*args, **kwargs):  # pragma: no cover - safety guard
+            called["value"] = True
+            raise AssertionError("send_reply should not be called for an invalid email number")
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _should_not_send)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 99, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "invalid_email_number"
+        assert "could not find" in payload["message"].lower()
+        assert called["value"] is False
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_empty_text_fails_safely(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        called = {"value": False}
+
+        def _should_not_send(*args, **kwargs):  # pragma: no cover - safety guard
+            called["value"] = True
+            raise AssertionError("send_reply should not be called for an empty reply")
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _should_not_send)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "   ", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "invalid_reply_text"
+        assert "reply should say" in payload["message"].lower()
+        assert called["value"] is False
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_requires_agent_key(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 401, response.text
     finally:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
