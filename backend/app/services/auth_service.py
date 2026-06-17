@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.phone import normalize_phone_number
 from app.core.timezone import DEFAULT_TIMEZONE, normalize_timezone_name
 from app.models.user import User
 from app.models.user_call_preference import UserCallPreference
@@ -26,10 +27,17 @@ def signup(db: Session, payload: SignupRequest) -> AuthResponse:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
     timezone_name = normalize_timezone_name(payload.timezone, DEFAULT_TIMEZONE)
+    phone_number = None
+    if payload.phone_number:
+        try:
+            phone_number = normalize_phone_number(payload.phone_number)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     user = User(
         email=payload.email.lower(),
         name=payload.name,
-        phone_number=payload.phone_number,
+        phone_number=phone_number,
         timezone=timezone_name,
         preferred_language=payload.preferred_language,
         hashed_password=hash_password(payload.password),
@@ -46,6 +54,7 @@ def signup(db: Session, payload: SignupRequest) -> AuthResponse:
     db.add(preferences)
     call_preferences = UserCallPreference(
         user_id=user.id,
+        phone_number=phone_number,
         timezone=timezone_name,
     )
     db.add(call_preferences)

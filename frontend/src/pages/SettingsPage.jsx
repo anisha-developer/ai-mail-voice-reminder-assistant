@@ -48,6 +48,7 @@ export default function SettingsPage() {
   const [gmailError, setGmailError] = useState("");
   const [gmailLoading, setGmailLoading] = useState(false);
   const [callPrefs, setCallPrefs] = useState({
+    phone_number: "",
     timezone: "Asia/Kolkata",
     call_slot_1_time: "09:00",
     call_slot_1_enabled: true,
@@ -182,6 +183,7 @@ export default function SettingsPage() {
     setCallPrefsLoading(true);
     try {
       const updated = await callPreferencesApi.update({
+        phone_number: callPrefs.phone_number,
         timezone: callPrefs.timezone,
         call_slot_1_time: callPrefs.call_slot_1_time,
         call_slot_1_enabled: callPrefs.call_slot_1_enabled,
@@ -292,6 +294,19 @@ export default function SettingsPage() {
           </div>
         </div>
         <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleSaveCallPreferences}>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Phone number for voice calls
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              value={callPrefs.phone_number || ""}
+              onChange={(e) => setCallPrefs({ ...callPrefs, phone_number: e.target.value })}
+              placeholder="+919843731545"
+              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
+            />
+            <p className="mt-2 text-xs text-slate-500">Use international format, example +919843731545.</p>
+          </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             Minimum new emails required to call
             <select

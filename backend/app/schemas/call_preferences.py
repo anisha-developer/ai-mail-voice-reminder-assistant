@@ -27,6 +27,7 @@ class CallPreferenceSlot(BaseModel):
 
 
 class CallPreferencesResponse(BaseModel):
+    phone_number: str | None = None
     timezone: str
     call_slot_1_time: str
     call_slot_1_enabled: bool
@@ -46,6 +47,7 @@ class CallPreferencesResponse(BaseModel):
 
 
 class UpdateCallPreferencesRequest(BaseModel):
+    phone_number: str | None = None
     timezone: str | None = None
     call_slot_1_time: str | None = None
     call_slot_1_enabled: bool | None = None
@@ -56,4 +58,3 @@ class UpdateCallPreferencesRequest(BaseModel):
     minimum_new_emails_to_call: int | None = None
     skip_if_no_new_emails: bool | None = None
     avoid_repeating_delivered_emails: bool | None = None
-

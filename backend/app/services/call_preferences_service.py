@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.phone import PHONE_NUMBER_ERROR, normalize_phone_number
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
@@ -58,8 +59,15 @@ def _validate_timezone_name(name: str | None) -> str:
 
 
 def _default_preferences(user: User) -> UserCallPreference:
+    phone_number = None
+    if user.phone_number:
+        try:
+            phone_number = normalize_phone_number(user.phone_number)
+        except ValueError:
+            phone_number = None
     return UserCallPreference(
         user_id=user.id,
+        phone_number=phone_number,
         timezone=_validate_timezone_name(user.timezone or DEFAULT_TIMEZONE),
         call_slot_1_time=DEFAULT_SLOT_TIMES[0],
         call_slot_1_enabled=True,
@@ -77,6 +85,15 @@ def _default_preferences(user: User) -> UserCallPreference:
 def get_or_create_call_preferences(db: Session, user: User) -> UserCallPreference:
     prefs = db.query(UserCallPreference).filter(UserCallPreference.user_id == user.id).first()
     if prefs is not None:
+        if not prefs.phone_number and user.phone_number:
+            try:
+                prefs.phone_number = normalize_phone_number(user.phone_number)
+                prefs.updated_at = datetime.now(timezone.utc)
+                db.add(prefs)
+                db.commit()
+                db.refresh(prefs)
+            except ValueError:
+                pass
         return prefs
     prefs = _default_preferences(user)
     db.add(prefs)
@@ -142,6 +159,7 @@ def _build_preview(db: Session, user: User, prefs: UserCallPreference) -> Schedu
 def call_preferences_to_item(db: Session, user: User, prefs: UserCallPreference) -> dict[str, object]:
     preview = _build_preview(db, user, prefs)
     return {
+        "phone_number": prefs.phone_number or user.phone_number,
         "timezone": prefs.timezone,
         "call_slot_1_time": prefs.call_slot_1_time,
         "call_slot_1_enabled": prefs.call_slot_1_enabled,
@@ -163,6 +181,11 @@ def call_preferences_to_item(db: Session, user: User, prefs: UserCallPreference)
 
 def update_call_preferences(db: Session, user: User, payload) -> UserCallPreference:
     prefs = get_or_create_call_preferences(db, user)
+    if payload.phone_number is not None:
+        try:
+            prefs.phone_number = normalize_phone_number(payload.phone_number)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=PHONE_NUMBER_ERROR) from exc
     if payload.timezone is not None:
         prefs.timezone = _validate_timezone_name(payload.timezone)
     for field, fallback in (

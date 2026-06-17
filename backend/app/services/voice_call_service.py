@@ -16,6 +16,7 @@ from app.config import settings
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
+from app.models.user_call_preference import UserCallPreference
 from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.voice_reply_session import VoiceReplySession
 from app.services.voice_reminder_service import (
@@ -66,6 +67,7 @@ from app.services.smart_voice_intent_service import (
     INTENT_PREVIOUS_EMAIL,
     resolve_smart_voice_intent,
 )
+from app.core.phone import normalize_phone_number
 
 VOICE_PROVIDER_TWILIO = "twilio"
 TWILIO_TERMINAL_FAILURE_STATES = {"failed", "busy", "no-answer", "canceled"}
@@ -212,9 +214,20 @@ def _validate_user_phone(user: User) -> str:
     phone = (user.phone_number or "").strip()
     if not phone:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User has no phone number")
-    if not phone.startswith("+") or len(phone) < 8:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phone number")
-    return phone
+    try:
+        return normalize_phone_number(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _validate_mail_summary_phone(db: Session, user: User) -> str:
+    prefs = db.query(UserCallPreference).filter(UserCallPreference.user_id == user.id).first()
+    if prefs and prefs.phone_number:
+        try:
+            return normalize_phone_number(prefs.phone_number)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _validate_user_phone(user)
 
 
 def _twilio_client() -> Client:
@@ -248,7 +261,7 @@ def _get_mail_call_by_provider_call_id(db: Session, provider_call_id: str) -> Ma
 
 
 def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> dict[str, str]:
-    to_phone = _validate_user_phone(user)
+    to_phone = _validate_mail_summary_phone(db, user)
     call_log = get_mail_call_for_user(db, user, call_log_id)
 
     if call_log.call_status != "prepared":

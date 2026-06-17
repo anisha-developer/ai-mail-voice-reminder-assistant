@@ -11,6 +11,7 @@ class UserCallPreference(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    phone_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="Asia/Kolkata")
     call_slot_1_time: Mapped[str] = mapped_column(String(5), nullable=False, default="09:00")
     call_slot_1_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

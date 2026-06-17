@@ -35,6 +35,7 @@ def test_call_preferences_defaults_and_update() -> None:
     response = client.get("/call-preferences", headers=headers)
     assert response.status_code == 200, response.text
     payload = response.json()
+    assert payload["phone_number"] == "+919843731545"
     assert payload["call_slot_1_time"] == "09:00"
     assert payload["call_slot_2_time"] == "13:00"
     assert payload["call_slot_3_time"] == "19:00"
@@ -45,6 +46,7 @@ def test_call_preferences_defaults_and_update() -> None:
         "/call-preferences",
         headers=headers,
         json={
+            "phone_number": "9843731545",
             "timezone": "Asia/Kolkata",
             "call_slot_1_time": "08:30",
             "call_slot_1_enabled": True,
@@ -59,6 +61,7 @@ def test_call_preferences_defaults_and_update() -> None:
     )
     assert update.status_code == 200, update.text
     updated = update.json()
+    assert updated["phone_number"] == "+919843731545"
     assert updated["call_slot_1_time"] == "08:30"
     assert updated["call_slot_2_enabled"] is False
     assert updated["minimum_new_emails_to_call"] == 3
@@ -68,3 +71,6 @@ def test_call_preferences_defaults_and_update() -> None:
 
     invalid_minimum = client.put("/call-preferences", headers=headers, json={"minimum_new_emails_to_call": 2})
     assert invalid_minimum.status_code in {400, 422}
+
+    invalid_phone = client.put("/call-preferences", headers=headers, json={"phone_number": "12345"})
+    assert invalid_phone.status_code in {400, 422}
