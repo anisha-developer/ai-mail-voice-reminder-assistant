@@ -49,7 +49,6 @@ export default function SettingsPage() {
   const [gmailLoading, setGmailLoading] = useState(false);
   const [callPrefs, setCallPrefs] = useState({
     phone_number: "",
-    timezone: "Asia/Kolkata",
     call_slot_1_time: "09:00",
     call_slot_1_enabled: true,
     call_slot_2_time: "13:00",
@@ -184,7 +183,6 @@ export default function SettingsPage() {
     try {
       const updated = await callPreferencesApi.update({
         phone_number: callPrefs.phone_number,
-        timezone: callPrefs.timezone,
         call_slot_1_time: callPrefs.call_slot_1_time,
         call_slot_1_enabled: callPrefs.call_slot_1_enabled,
         call_slot_2_time: callPrefs.call_slot_2_time,
@@ -268,13 +266,6 @@ export default function SettingsPage() {
                 Connect Gmail
               </button>
             )}
-            <button
-              type="button"
-              onClick={refreshGmailStatus}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
-            >
-              Refresh Status
-            </button>
           </div>
         </div>
         <div className="mt-4 space-y-3">
@@ -288,14 +279,12 @@ export default function SettingsPage() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Call Preferences</p>
             <h3 className="mt-2 text-xl font-semibold text-slate-900">Daily Email Summary Call Schedule</h3>
-            <p className="mt-1 text-sm text-slate-600">
-              Email summary calls only happen at these times if there are new pending emails. Reminder calls do not affect this limit.
-            </p>
+            <p className="mt-1 text-sm text-slate-600">You can schedule up to 3 email summary calls per day.</p>
           </div>
         </div>
         <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleSaveCallPreferences}>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Phone number for voice calls
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <label className="block text-sm font-medium text-slate-700">Phone number for voice calls</label>
             <input
               type="tel"
               inputMode="tel"
@@ -303,23 +292,9 @@ export default function SettingsPage() {
               value={callPrefs.phone_number || ""}
               onChange={(e) => setCallPrefs({ ...callPrefs, phone_number: e.target.value })}
               placeholder="+919843731545"
-              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
+              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
             />
             <p className="mt-2 text-xs text-slate-500">Use international format, example +919843731545.</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Minimum new emails required to call
-            <select
-              value={callPrefs.minimum_new_emails_to_call}
-              onChange={(e) => setCallPrefs({ ...callPrefs, minimum_new_emails_to_call: Number(e.target.value) })}
-              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"
-            >
-              {[1, 3, 5].map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
           </div>
           {[
             ["call_slot_1_time", "call_slot_1_enabled", "Call 1"],
@@ -330,7 +305,6 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
-                  <p className="mt-1 text-sm text-slate-600">Set the scheduled mail summary call time.</p>
                 </div>
                 <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                   <input
@@ -391,7 +365,6 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </div>
-              <p className="mt-2 text-xs text-slate-500">Current value: {to12HourTime(callPrefs[timeKey])} IST</p>
             </div>
           ))}
           <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
