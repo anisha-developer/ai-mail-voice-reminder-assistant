@@ -129,8 +129,12 @@ export default function SettingsPage() {
         method: "PUT",
         body: JSON.stringify({ name: form.name }),
       });
+      const phoneSaved = await callPreferencesApi.update({
+        phone_number: callPrefs.phone_number,
+      });
       setUser(updated);
-      setMessage("Profile updated successfully.");
+      setCallPrefs((current) => ({ ...current, phone_number: phoneSaved.phone_number || current.phone_number }));
+      setMessage("Profile and phone number saved successfully.");
     } catch (err) {
       setError(err.message);
     }
@@ -214,12 +218,28 @@ export default function SettingsPage() {
       description="Update your preferences."
     >
       <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
-        <input
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          placeholder="Full name"
-          className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
-        />
+        <div>
+          <label className="mb-2 block text-sm font-medium text-slate-700">Name</label>
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Full name"
+            className="h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700">Phone number for voice calls</label>
+          <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={callPrefs.phone_number || ""}
+            onChange={(e) => setCallPrefs({ ...callPrefs, phone_number: e.target.value })}
+            placeholder="+91 **********"
+            className="mt-2 h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
+          />
+          <p className="mt-2 text-xs text-slate-500">Use international format, example +91 **********.</p>
+        </div>
         <div className="md:col-span-2 space-y-3">
           {message ? <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{message}</p> : null}
           {error ? <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{error}</p> : null}
@@ -283,19 +303,6 @@ export default function SettingsPage() {
           </div>
         </div>
         <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleSaveCallPreferences}>
-          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-            <label className="block text-sm font-medium text-slate-700">Phone number for voice calls</label>
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              value={callPrefs.phone_number || ""}
-              onChange={(e) => setCallPrefs({ ...callPrefs, phone_number: e.target.value })}
-              placeholder="+919843731545"
-              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-900"
-            />
-            <p className="mt-2 text-xs text-slate-500">Use international format, example +919843731545.</p>
-          </div>
           {[
             ["call_slot_1_time", "call_slot_1_enabled", "Call 1"],
             ["call_slot_2_time", "call_slot_2_enabled", "Call 2"],
