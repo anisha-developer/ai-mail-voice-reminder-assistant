@@ -5,11 +5,13 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from zoneinfo import ZoneInfo
 
 from app.database.session import SessionLocal
 from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.user import User
 from app.models.user_call_preference import UserCallPreference
 from app.services.email_summarization_service import get_summary_counts
@@ -61,6 +63,16 @@ def _create_user(email_prefix: str = "quota-test") -> dict[str, object]:
 def _cleanup_user(user_id: int) -> None:
     db = SessionLocal()
     try:
+        db.query(VoiceCallInteraction).filter(VoiceCallInteraction.user_id == user_id).delete(synchronize_session=False)
+        db.query(EmailSummary).filter(EmailSummary.user_id == user_id).update(
+            {
+                EmailSummary.mail_call_log_id: None,
+                EmailSummary.delivered_at: None,
+                EmailSummary.is_delivered_in_mail_call: False,
+            },
+            synchronize_session=False,
+        )
+        db.flush()
         db.query(MailSummaryCallLog).filter(MailSummaryCallLog.user_id == user_id).delete(synchronize_session=False)
         db.query(EmailSummary).filter(EmailSummary.user_id == user_id).delete(synchronize_session=False)
         db.query(EmailMessage).filter(EmailMessage.user_id == user_id).delete(synchronize_session=False)
@@ -69,6 +81,10 @@ def _cleanup_user(user_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _quota_today() -> date:
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
 
 
 def _create_summary(db, user_id: int, user_email: str, subject: str = "Quota test email") -> EmailSummary:
@@ -130,7 +146,7 @@ def test_mail_call_count_today_counts_only_current_enabled_slots() -> None:
                     user_id=user_id,
                     call_type="mail_summary",
                     call_status=call_status,
-                    call_date=date.today(),
+                    call_date=_quota_today(),
                     call_time=call_time,
                     summary_count=1,
                     script_text="Quota test",
@@ -166,7 +182,7 @@ def test_prepare_mail_summary_call_blocks_only_when_three_current_slots_used() -
                 user_id=user_id,
                 call_type="mail_summary",
                 call_status="delivered",
-                call_date=date.today(),
+                call_date=_quota_today(),
                 call_time=time(9, 0),
                 summary_count=1,
                 script_text="Quota test",
@@ -185,7 +201,7 @@ def test_prepare_mail_summary_call_blocks_only_when_three_current_slots_used() -
                 user_id=user_id,
                 call_type="mail_summary",
                 call_status="delivered",
-                call_date=date.today(),
+                call_date=_quota_today(),
                 call_time=time(12, 30),
                 summary_count=1,
                 script_text="Quota test",
@@ -204,7 +220,7 @@ def test_prepare_mail_summary_call_blocks_only_when_three_current_slots_used() -
                 user_id=user_id,
                 call_type="mail_summary",
                 call_status="completed",
-                call_date=date.today(),
+                call_date=_quota_today(),
                 call_time=time(14, 2),
                 summary_count=1,
                 script_text="Quota test",

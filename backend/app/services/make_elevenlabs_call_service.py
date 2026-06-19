@@ -113,7 +113,7 @@ def _resolve_summaries(db: Session, call_log: MailSummaryCallLog, summaries: Ite
         except Exception:
             summary_ids = []
     if summary_ids:
-        return (
+        summaries = (
             db.query(EmailSummary)
             .filter(
                 EmailSummary.user_id == call_log.user_id,
@@ -121,6 +121,8 @@ def _resolve_summaries(db: Session, call_log: MailSummaryCallLog, summaries: Ite
             )
             .all()
         )
+        summary_map = {summary.id: summary for summary in summaries}
+        return [summary_map[summary_id] for summary_id in summary_ids if summary_id in summary_map]
     return (
         db.query(EmailSummary)
         .filter(

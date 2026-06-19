@@ -33,7 +33,7 @@ from app.services.voice_reminder_service import (
     update_reminder_details,
 )
 from app.services.mail_summary_call_service import mark_mail_call_delivered
-from app.services.gmail_reply_service import cancel_reply, get_active_reply_session, send_reply, start_reply_session, update_reply_body
+from app.services.gmail_reply_service import cancel_reply, get_active_reply_session, resolve_reply_recipient, send_reply, start_reply_session, update_reply_body
 from app.services.elevenlabs_service import start_mail_summary_call_with_elevenlabs
 from app.services.make_elevenlabs_call_service import send_mail_summary_call_to_make
 from app.services.voice_email_lookup_service import get_last_explained_email_for_call, resolve_email_reference_for_call
@@ -787,6 +787,23 @@ def process_voice_mail_reply_request(
             "data": {
                 "email_number": email_number,
                 "subject": _spoken_subject(summary.subject),
+            },
+        }
+
+    if resolve_reply_recipient(summary.email_message) is None:
+        logger.info(
+            "Voice mail reply blocked for call_log_id=%s email_number=%s sender=%r subject=%r",
+            call_log_id,
+            email_number,
+            summary.sender,
+            summary.subject,
+        )
+        return {
+            "success": False,
+            "status": "blocked_sender",
+            "message": "I could not find a valid recipient for this reply because this sender looks automated. Please choose a different email.",
+            "data": {
+                "email_number": email_number,
             },
         }
 

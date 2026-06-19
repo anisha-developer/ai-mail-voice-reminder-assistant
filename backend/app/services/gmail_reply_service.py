@@ -18,6 +18,13 @@ from app.models.voice_reply_session import VoiceReplySession
 from app.models.user import User
 from app.services.gmail_oauth_service import get_connection_credentials
 
+BLOCKED_REPLY_KEYWORDS = (
+    "xbox",
+    "marketing",
+    "promotional",
+    "newsletter",
+)
+
 
 def _active_session(db: Session, user_id: int, call_log_id: int) -> VoiceReplySession | None:
     try:
@@ -58,6 +65,17 @@ def _extract_email_address(value: str | None) -> str | None:
 def resolve_reply_recipient(email_message: GmailEmailMessage | None) -> str | None:
     if email_message is None:
         return None
+
+    sender_text = f"{getattr(email_message, 'sender', '') or ''} {getattr(email_message, 'reply_to', '') or ''}".lower()
+    display_name, sender_email = parseaddr(getattr(email_message, "sender", "") or "")
+    _, reply_to_email = parseaddr(getattr(email_message, "reply_to", "") or "")
+    email_candidates = [candidate.strip().lower() for candidate in (sender_email, reply_to_email) if candidate]
+    local_parts = [candidate.split("@", 1)[0] for candidate in email_candidates if "@" in candidate]
+    if any(keyword in sender_text for keyword in BLOCKED_REPLY_KEYWORDS):
+        return None
+    if any(local.startswith(("no-reply", "noreply", "updates-noreply", "do-not-reply", "donotreply")) for local in local_parts):
+        return None
+
     for candidate in (getattr(email_message, "reply_to", None), email_message.sender):
         resolved = _extract_email_address(candidate)
         if resolved:

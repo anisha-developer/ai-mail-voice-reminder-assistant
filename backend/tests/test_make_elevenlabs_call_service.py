@@ -160,6 +160,100 @@ def test_payload_shape_and_sanitization(monkeypatch) -> None:
         _cleanup(call_log_id, summary_id, message_id)
 
 
+def test_payload_preserves_summary_order_for_voice_selection(monkeypatch) -> None:
+    call_log_id, summary_id, message_id = _call_log_with_summary()
+    db = SessionLocal()
+    extra_message_ids: list[int] = []
+    extra_summary_ids: list[int] = []
+    try:
+        user = db.query(User).filter(User.email == "browsertest@example.com").first()
+        call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+        assert user is not None and call_log is not None
+
+        for index in range(2, 4):
+            message = EmailMessage(
+                user_id=user.id,
+                gmail_message_id=f"make-order-test-{uuid4()}",
+                gmail_thread_id=None,
+                sender=f"sender{index}@example.com",
+                recipient=user.email,
+                subject=f"Order Test Email {index}",
+                snippet=f"Snippet {index}",
+                plain_body=f"Body {index}",
+                html_body=None,
+                received_at=datetime.now(timezone.utc),
+                has_attachments=False,
+                attachment_metadata=None,
+                is_read_from_gmail=True,
+                is_summarized=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(message)
+            db.flush()
+            extra_message_ids.append(message.id)
+            summary = EmailSummary(
+                user_id=user.id,
+                email_message_id=message.id,
+                sender=message.sender,
+                subject=message.subject,
+                short_summary=f"Short summary {index}",
+                detailed_summary=f"Detailed summary {index}",
+                action_required_text=None,
+                attachment_note=None,
+                summary_status="completed",
+                error_message=None,
+                is_delivered_in_mail_call=False,
+                delivered_at=None,
+                mail_call_log_id=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            db.add(summary)
+            db.flush()
+            extra_summary_ids.append(summary.id)
+
+        custom_order = [extra_summary_ids[1], summary_id, extra_summary_ids[0]]
+        call_log.delivered_summary_ids = json.dumps(custom_order)
+        call_log.summary_count = len(custom_order)
+        db.add(call_log)
+        db.commit()
+
+        monkeypatch.setattr(settings, "make_elevenlabs_webhook_url", "https://example.com/webhook", raising=False)
+
+        captured: dict[str, object] = {}
+
+        class _Response:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def _post(url: str, json: dict[str, object], timeout: float):
+            captured["json"] = json
+            return _Response()
+
+        monkeypatch.setattr(httpx, "post", _post)
+
+        result = send_mail_summary_call_to_make(db, user, call_log)
+        assert result["success"] is True
+        emails = json.loads(captured["json"]["emails_json"])
+        assert [item["number"] for item in emails] == [1, 2, 3]
+        assert emails[0]["subject"] == "Order Test Email 3"
+        assert emails[1]["subject"] == "Portfolio inquiry"
+        assert emails[2]["subject"] == "Order Test Email 2"
+    finally:
+        db.close()
+        db = SessionLocal()
+        try:
+            db.query(EmailSummary).filter(EmailSummary.id.in_(extra_summary_ids)).delete(synchronize_session=False)
+            db.query(EmailMessage).filter(EmailMessage.id.in_(extra_message_ids)).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+        _cleanup(call_log_id, summary_id, message_id)
+
+
 def test_missing_webhook_url_returns_safe_failure(monkeypatch) -> None:
     call_log_id, summary_id, message_id = _call_log_with_summary()
     db = SessionLocal()

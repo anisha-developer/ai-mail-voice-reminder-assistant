@@ -497,6 +497,82 @@ def test_voice_mail_call_reply_sends_when_confirmed(monkeypatch) -> None:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
 
+def test_voice_mail_call_reply_uses_exact_email_number_order(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    db = SessionLocal()
+    try:
+        call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+        assert call_log is not None
+        custom_order = [summary_ids[2], summary_ids[0], summary_ids[1]]
+        call_log.delivered_summary_ids = json.dumps(custom_order)
+        db.add(call_log)
+        db.commit()
+
+        captured: dict[str, object] = {}
+
+        def _fake_send_reply(db, user, session):
+            captured["session"] = session
+            return {"provider_message_id": "mock-provider-message-id"}
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _fake_send_reply)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 2, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is True
+        session = captured.get("session")
+        assert session is not None
+        assert session.target_email_reference == 2
+        assert session.email_summary_id == summary_ids[0]
+        assert session.email_message_id is not None
+    finally:
+        db.close()
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_blocks_no_reply_sender(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    db = SessionLocal()
+    try:
+        summary = db.query(EmailSummary).filter(EmailSummary.id == summary_ids[0]).first()
+        message = db.query(EmailMessage).filter(EmailMessage.id == summary.email_message_id).first()
+        assert summary is not None and message is not None
+        message.sender = "XBOX <no-reply@e.xbox.com>"
+        summary.sender = message.sender
+        db.add(message)
+        db.add(summary)
+        db.commit()
+
+        called = {"value": False}
+
+        def _should_not_send(*args, **kwargs):  # pragma: no cover - safety guard
+            called["value"] = True
+            raise AssertionError("send_reply should not be called for blocked senders")
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _should_not_send)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "blocked_sender"
+        assert "valid recipient" in payload["message"].lower()
+        assert called["value"] is False
+    finally:
+        db.close()
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
 def test_voice_mail_call_reply_invalid_email_number_fails_safely(monkeypatch) -> None:
     _set_agent_key(monkeypatch)
     call_log_id, summary_ids, message_ids = _create_voice_test_call()

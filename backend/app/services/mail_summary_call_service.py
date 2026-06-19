@@ -134,7 +134,7 @@ def _counted_mail_summary_calls_query(db: Session, user_id: int, call_date):
             MailSummaryCallLog.user_id == user_id,
             MailSummaryCallLog.call_type == "mail_summary",
             MailSummaryCallLog.call_date == call_date,
-            MailSummaryCallLog.delivery_status == "delivered",
+            MailSummaryCallLog.call_status.in_(("delivered", "completed")),
         )
     )
 
