@@ -46,11 +46,9 @@ def _default_summary_payload(subject: str | None, sender: str | None, body: str 
     body_text = _body_text(body)
     summary_base = f"Email received about {subject_text}. It may need review based on the message content."
     if language == "tamil":
-        summary_base = f"Email received about {subject_text}. It may need review based on the message content."
+        summary_base = f"Indha email {subject_text} pathi vandhurukku. Idhu review panna vendiya important mail."
     elif language == "tanglish":
-        summary_base = f"Indha email {subject_text} pathi vandhurukku. Message content-a paathu review panna vendiyadhu."
-    if body_text:
-        summary_base = f"{summary_base} {body_text[:120]}".strip()
+        summary_base = f"Indha email {subject_text} pathi vandhurukku. Idhu review panna vendiya important mail."
     important_points = [subject_text]
     if body_text:
         important_points.append(body_text[:120])
@@ -69,13 +67,11 @@ def _default_detail_payload(subject: str | None, sender: str | None, body: str |
     subject_text = _clean_text(subject) or "No subject"
     body_text = _body_text(body)
     if language == "tamil":
-        explanation = f"Email received about {subject_text}. It may need review."
+        explanation = f"Indha email {subject_text} pathi vandhurukku. Idhu review panna vendiya mail."
     elif language == "tanglish":
-        explanation = f"Indha email {subject_text} pathi vandhurukku. Review panna vendiya message."
+        explanation = f"Indha email {subject_text} pathi vandhurukku. Idhu review panna vendiya mail."
     else:
         explanation = f"Email received about {subject_text}. It may need review based on the message content."
-    if body_text:
-        explanation = f"{explanation} Details: {body_text[:220]}"
     return {
         "detailed_explanation": explanation,
         "important_points": [subject_text] + ([body_text[:120]] if body_text else []),
@@ -186,10 +182,11 @@ def _should_use_gemini() -> bool:
 def _prompt_intro(language: str) -> str:
     return (
         "You are the understanding brain for an email assistant. "
-        "Understand the email meaning. Do not just copy the email. "
+        "Understand the email meaning. Do not just copy the email body. "
         "Identify purpose, important points, action needed, deadline/date/time if present, and whether reply or reminder is useful. "
         "Write in a voice-friendly way using simple user-friendly words. "
         "For short summaries, use 1 to 2 clear sentences. For detailed explanations, use 3 to 5 useful sentences. "
+        "If the selected language is Tamil or Tanglish, write fully in Tanglish and do not mix raw English email lines into the summary. "
         "Do not use awkward phrases like 'kitta irundhu'. Do not invent facts. If unclear, say unclear. "
         "Do not give medical or diet advice unless the email explicitly contains such content. "
         f"Return only JSON. Use selected language: {language}."

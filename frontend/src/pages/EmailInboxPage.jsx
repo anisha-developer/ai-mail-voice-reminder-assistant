@@ -3,8 +3,52 @@ import { createPortal } from "react-dom";
 import PageShell from "../components/PageShell";
 import { emailApi } from "../lib/api";
 
+function formatEmailDate(value) {
+  return value ? new Date(value).toLocaleString() : "-";
+}
+
+function cleanEmailText(value) {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(/<!doctype[\s\S]*?>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getDisplayMessage(email) {
+  const primary = cleanEmailText(email?.snippet || "");
+  if (primary) return primary;
+
+  const fallback = cleanEmailText(email?.plain_body || "");
+  return fallback;
+}
+
+function getVisibleAttachments(email) {
+  const attachments = Array.isArray(email?.attachment_metadata) ? email.attachment_metadata : [];
+  return attachments.filter((item) => {
+    if (!item) return false;
+    if (typeof item === "string") return item.trim().length > 0;
+    if (typeof item === "object") {
+      return Object.values(item).some((value) => String(value || "").trim().length > 0);
+    }
+    return false;
+  });
+}
+
 function EmailDetailModal({ email, onClose }) {
   if (!email) return null;
+  const displayMessage = getDisplayMessage(email);
+  const attachments = getVisibleAttachments(email);
   return createPortal(
     <div
       className="fixed inset-0 z-[80] bg-slate-950/70 p-4 sm:p-6"
@@ -36,34 +80,39 @@ function EmailDetailModal({ email, onClose }) {
             <p>
               <span className="text-slate-400">From:</span> {email.sender || "-"}
             </p>
-            <p>
-              <span className="text-slate-400">To:</span> {email.recipient || "-"}
-            </p>
+            {email.recipient ? (
+              <p>
+                <span className="text-slate-400">To:</span> {email.recipient}
+              </p>
+            ) : null}
             <p>
               <span className="text-slate-400">Received:</span>{" "}
-              {email.received_at ? new Date(email.received_at).toLocaleString() : "-"}
+              {formatEmailDate(email.received_at)}
             </p>
-            <p>
-              <span className="text-slate-400">Snippet:</span> {email.snippet || "-"}
-            </p>
-            <p>
-              <span className="text-slate-400">Plain body:</span>
-            </p>
-            <pre className="whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
-              {email.plain_body || "-"}
-            </pre>
-            <p>
-              <span className="text-slate-400">HTML body:</span>
-            </p>
-            <pre className="whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
-              {email.html_body || "-"}
-            </pre>
-            <p>
-              <span className="text-slate-400">Attachments:</span>
-            </p>
-            <pre className="whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
-              {JSON.stringify(email.attachment_metadata || [], null, 2)}
-            </pre>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Message</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                {displayMessage || "No message preview available."}
+              </p>
+            </div>
+            {attachments.length > 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Attachments</p>
+                <ul className="mt-2 space-y-2 text-sm text-slate-700">
+                  {attachments.map((attachment, index) => {
+                    const label =
+                      typeof attachment === "string"
+                        ? attachment
+                        : attachment?.filename || attachment?.name || attachment?.mime_type || `Attachment ${index + 1}`;
+                    return (
+                      <li key={`${label}-${index}`} className="break-words">
+                        {label}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

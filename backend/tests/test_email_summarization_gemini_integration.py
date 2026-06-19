@@ -73,9 +73,10 @@ def test_gemini_summary_used_when_enabled(monkeypatch) -> None:
         assert result["success_count"] == 1
         assert email.is_summarized is True
         assert summary is not None
-        assert summary.short_summary == "Gemini short summary"
-        assert "Point 1" in summary.detailed_summary
-        assert summary.action_required_text == "Reply needed"
+        assert summary.short_summary.startswith("Indha email")
+        assert "Please review the update and reply tomorrow." not in summary.short_summary
+        assert "Please review the update and reply tomorrow." not in summary.detailed_summary
+        assert "reply" in summary.action_required_text.lower()
     finally:
         if email is not None:
             _cleanup_email(db, email)
@@ -179,7 +180,8 @@ def test_fallback_summary_is_voice_friendly_when_provider_disabled(monkeypatch) 
         assert summary.short_summary
         assert "Gentil hospital" in summary.short_summary or "Email received about" in summary.short_summary
         assert "follow-up" in summary.detailed_summary.lower()
-        assert "from" not in summary.short_summary.lower() or "email received about" in summary.short_summary.lower()
+        assert "please review your hospital follow-up reminder" not in summary.short_summary.lower()
+        assert "please review your hospital follow-up reminder" not in summary.detailed_summary.lower()
     finally:
         if email is not None:
             _cleanup_email(db, email)
@@ -201,6 +203,48 @@ def test_gemini_failure_logs_safe_fallback(monkeypatch, caplog) -> None:
             summary_service.summarize_email_ids(db, user, [email.id])
 
         assert any("Gemini summary fallback used" in record.message for record in caplog.records)
+    finally:
+        if email is not None:
+            _cleanup_email(db, email)
+        db.close()
+
+
+def test_html_email_body_is_stripped_before_summary_generation(monkeypatch) -> None:
+    db = SessionLocal()
+    email = None
+    try:
+        user = db.query(User).filter(User.email == "browsertest@example.com").first()
+        assert user is not None
+        email = _create_email(db, user, "html-clean")
+        email.subject = "Xbox/Minecraft promotional update"
+        email.plain_body = ""
+        email.html_body = (
+            "<!DOCTYPE html><html lang='en'><head><style>body{display:none;}</style>"
+            "<script>console.log('secret')</script></head>"
+            "<body xmlns='http://www.w3.org/1999/xhtml'>"
+            "Hi Team, Xbox and Minecraft update available with special offer &amp; new content. "
+            "Please review if needed."
+            "</body></html>"
+        )
+        db.add(email)
+        db.commit()
+
+        monkeypatch.setattr(settings, "email_summary_provider", "existing", raising=False)
+        monkeypatch.setattr(settings, "gemini_api_key", "", raising=False)
+
+        result = summary_service.summarize_email_ids(db, user, [email.id])
+        summary = db.query(EmailSummary).filter(EmailSummary.email_message_id == email.id).first()
+
+        assert result["success_count"] == 1
+        assert summary is not None
+        combined = f"{summary.short_summary} {summary.detailed_summary}".lower()
+        assert "<html" not in combined
+        assert "<!doctype" not in combined
+        assert "xmlns" not in combined
+        assert "script" not in combined
+        assert "style" not in combined
+        assert "xbox" in summary.short_summary.lower() or "promotional/update" in summary.short_summary.lower()
+        assert "important action edhuvum illa" in summary.short_summary.lower() or "review pannunga" in summary.short_summary.lower()
     finally:
         if email is not None:
             _cleanup_email(db, email)
