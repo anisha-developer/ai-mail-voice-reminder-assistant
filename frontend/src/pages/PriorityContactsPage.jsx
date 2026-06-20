@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import PageShell from "../components/PageShell";
-import { emailApi } from "../lib/api";
+import { emailApi, priorityContactsApi } from "../lib/api";
 
-const PRIORITY_CONTACTS_KEY = "priority_contacts";
 const RELATIONSHIP_OPTIONS = ["Family", "Mentor", "Client", "Manager", "Other"];
 
 function normalizeEmailAddress(value) {
@@ -20,99 +19,120 @@ function getDisplayNameFromSender(sender) {
   return email ? email.split("@")[0] : sender.trim();
 }
 
-function readPriorityContacts() {
-  try {
-    const raw = localStorage.getItem(PRIORITY_CONTACTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePriorityContacts(contacts) {
-  try {
-    localStorage.setItem(PRIORITY_CONTACTS_KEY, JSON.stringify(contacts));
-  } catch {
-    // ignore storage issues
-  }
-}
-
-function savePriorityContact(contact) {
-  const contacts = readPriorityContacts();
-  const email = normalizeEmailAddress(contact.email);
-  if (!email) {
-    return { ok: false, message: "Please enter a valid email address." };
-  }
-
-  const nextContact = {
-    displayName: contact.displayName?.trim() || getDisplayNameFromSender(contact.email),
-    email,
-    relationship: contact.relationship || "Other",
-    addedAt: new Date().toISOString(),
+function emptyForm() {
+  return {
+    id: null,
+    displayName: "",
+    emailAddress: "",
+    relationship: "Other",
+    priorityLevel: 1,
+    notes: "",
   };
-
-  const existingIndex = contacts.findIndex((item) => normalizeEmailAddress(item.email) === email);
-  if (existingIndex >= 0) {
-    contacts[existingIndex] = { ...contacts[existingIndex], ...nextContact };
-  } else {
-    contacts.push(nextContact);
-  }
-
-  writePriorityContacts(contacts);
-  return { ok: true, message: existingIndex >= 0 ? "Priority contact updated." : "Priority contact saved." };
 }
 
 export default function PriorityContactsPage() {
   const [contacts, setContacts] = useState([]);
   const [emails, setEmails] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
-    displayName: "",
-    email: "",
-    relationship: "Other",
-  });
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(emptyForm());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const reloadContacts = () => {
-    setContacts(readPriorityContacts());
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [contactList, emailList] = await Promise.all([
+        priorityContactsApi.list(),
+        emailApi.getAllEmails(),
+      ]);
+      setContacts(Array.isArray(contactList) ? contactList : []);
+      setEmails(Array.isArray(emailList) ? emailList : []);
+    } catch (err) {
+      setError(err.message || "Could not load priority contacts.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    reloadContacts();
-    emailApi
-      .getAllEmails()
-      .then((list) => setEmails(Array.isArray(list) ? list : []))
-      .catch(() => setEmails([]))
-      .finally(() => setLoading(false));
+    loadData().catch(() => {});
   }, []);
 
   const priorityMail = useMemo(() => {
-    const priorityEmails = new Set(contacts.map((contact) => normalizeEmailAddress(contact.email)).filter(Boolean));
+    const priorityEmails = new Map(
+      contacts
+        .map((contact) => [normalizeEmailAddress(contact.email_address), contact])
+        .filter(([email]) => Boolean(email)),
+    );
+
     return emails.filter((email) => priorityEmails.has(normalizeEmailAddress(email.sender)));
   }, [contacts, emails]);
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
+  const resetForm = () => {
+    setForm(emptyForm());
     setError("");
     setMessage("");
-    const result = savePriorityContact(form);
-    if (!result.ok) {
-      setError(result.message);
-      return;
-    }
-    setMessage(result.message);
-    setForm({ displayName: "", email: "", relationship: "Other" });
-    reloadContacts();
   };
 
-  const removeContact = (email) => {
-    const nextContacts = readPriorityContacts().filter((contact) => normalizeEmailAddress(contact.email) !== normalizeEmailAddress(email));
-    writePriorityContacts(nextContacts);
-    reloadContacts();
-    setMessage("Priority contact removed.");
+  const beginEdit = (contact) => {
+    setForm({
+      id: contact.id,
+      displayName: contact.display_name || "",
+      emailAddress: contact.email_address || "",
+      relationship: contact.relationship || "Other",
+      priorityLevel: contact.priority_level || 1,
+      notes: contact.notes || "",
+    });
     setError("");
+    setMessage("");
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const payload = {
+        display_name: form.displayName.trim(),
+        email_address: form.emailAddress.trim(),
+        relationship: form.relationship,
+        priority_level: form.priorityLevel,
+        notes: form.notes.trim() || null,
+      };
+      if (form.id) {
+        await priorityContactsApi.update(form.id, payload);
+        setMessage("Priority contact updated.");
+      } else {
+        await priorityContactsApi.create(payload);
+        setMessage("Priority contact saved.");
+      }
+      resetForm();
+      await loadData();
+    } catch (err) {
+      setError(err.message || "Could not save priority contact.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeContact = async (contact) => {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await priorityContactsApi.delete(contact.id);
+      setMessage("Priority contact removed.");
+      if (form.id === contact.id) {
+        resetForm();
+      }
+      await loadData();
+    } catch (err) {
+      setError(err.message || "Could not delete priority contact.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -153,13 +173,13 @@ export default function PriorityContactsPage() {
             <span className="text-sm font-medium text-slate-700">Email address</span>
             <input
               type="email"
-              value={form.email}
-              onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
+              value={form.emailAddress}
+              onChange={(event) => setForm((current) => ({ ...current, emailAddress: event.target.value }))}
               className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
               placeholder="name@example.com"
             />
           </label>
-          <label className="space-y-2 md:col-span-2">
+          <label className="space-y-2">
             <span className="text-sm font-medium text-slate-700">Relationship</span>
             <select
               value={form.relationship}
@@ -173,13 +193,47 @@ export default function PriorityContactsPage() {
               ))}
             </select>
           </label>
-          <div className="md:col-span-2">
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-slate-700">Priority level</span>
+            <select
+              value={form.priorityLevel}
+              onChange={(event) => setForm((current) => ({ ...current, priorityLevel: Number(event.target.value) }))}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+            >
+              {[1, 2, 3].map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-sm font-medium text-slate-700">Notes</span>
+            <textarea
+              value={form.notes}
+              onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
+              rows={3}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+              placeholder="Important context for this contact"
+            />
+          </label>
+          <div className="flex flex-wrap gap-3 md:col-span-2">
             <button
               type="submit"
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+              disabled={saving}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Save
+              {form.id ? "Update" : "Save"}
             </button>
+            {form.id ? (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            ) : null}
           </div>
         </form>
       </section>
@@ -188,14 +242,18 @@ export default function PriorityContactsPage() {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Saved contacts</h2>
-            <p className="mt-1 text-sm text-slate-500">These contacts will be marked as priority in the Inbox demo view.</p>
+            <p className="mt-1 text-sm text-slate-500">These contacts are used for priority handling.</p>
           </div>
           <span className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500">
             {contacts.length} saved
           </span>
         </div>
 
-        {contacts.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+            Loading priority contacts...
+          </div>
+        ) : contacts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
             No priority contacts added yet.
           </div>
@@ -207,23 +265,34 @@ export default function PriorityContactsPage() {
                   <th className="px-4 py-3">Display name</th>
                   <th className="px-4 py-3">Email address</th>
                   <th className="px-4 py-3">Relationship</th>
+                  <th className="px-4 py-3">Priority</th>
                   <th className="px-4 py-3">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {contacts.map((contact) => (
-                  <tr key={contact.email} className="text-slate-700">
-                    <td className="px-4 py-3 font-medium text-slate-900">{contact.displayName || "-"}</td>
-                    <td className="px-4 py-3">{contact.email}</td>
+                  <tr key={contact.id} className="text-slate-700">
+                    <td className="px-4 py-3 font-medium text-slate-900">{contact.display_name || "-"}</td>
+                    <td className="px-4 py-3">{contact.email_address}</td>
                     <td className="px-4 py-3">{contact.relationship || "Other"}</td>
+                    <td className="px-4 py-3">{contact.priority_level || 1}</td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => removeContact(contact.email)}
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => beginEdit(contact)}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeContact(contact)}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

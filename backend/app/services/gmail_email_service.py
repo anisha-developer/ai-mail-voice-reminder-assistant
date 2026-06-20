@@ -13,6 +13,7 @@ from app.core.encryption import decrypt_value
 from app.models.email_message import EmailMessage
 from app.models.gmail_connection import GmailConnection
 from app.models.user import User
+from app.services.priority_contact_service import process_priority_email_alert
 from app.services.gmail_oauth_service import refresh_access_token_if_needed
 
 logger = logging.getLogger(__name__)
@@ -251,6 +252,28 @@ def sync_user_emails(db: Session, user: User, max_results: int = 50, max_pages: 
         except Exception as exc:
             db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database save failure") from exc
+
+    if inserted_email_ids:
+        for email_id in inserted_email_ids:
+            email = db.query(EmailMessage).filter(EmailMessage.user_id == user.id, EmailMessage.id == email_id).first()
+            if email is None:
+                continue
+            try:
+                result = process_priority_email_alert(db, user, email)
+                if result.get("success"):
+                    logger.info(
+                        "Priority mail alert triggered for user_id=%s email_id=%s status=%s",
+                        user.id,
+                        email.id,
+                        result.get("status"),
+                    )
+            except Exception:
+                logger.warning(
+                    "Priority mail alert processing failed for user_id=%s email_id=%s",
+                    user.id,
+                    email_id,
+                    exc_info=True,
+                )
 
     latest_stored_received_at = _latest_stored_received_at(db, user.id)
 

@@ -4,6 +4,8 @@ from app.models.email_reply_action import EmailReplyAction
 from app.models.email_summary import EmailSummary
 from app.models.gmail_connection import GmailConnection
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.priority_contact import PriorityContact
+from app.models.priority_mail_alert_log import PriorityMailAlertLog
 from app.models.reminder import Reminder
 from app.models.reminder_call_log import ReminderCallLog
 from app.models.recurring_reminder_rule import RecurringReminderRule

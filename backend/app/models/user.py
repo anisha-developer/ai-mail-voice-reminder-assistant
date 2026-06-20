@@ -31,3 +31,5 @@ class User(Base):
     gmail_connections = relationship("GmailConnection", back_populates="user", cascade="all, delete-orphan")
     voice_call_interactions = relationship("VoiceCallInteraction", back_populates="user", cascade="all, delete-orphan")
     call_preferences = relationship("UserCallPreference", back_populates="user", cascade="all, delete-orphan")
+    priority_contacts = relationship("PriorityContact", back_populates="user", cascade="all, delete-orphan")
+    priority_mail_alert_logs = relationship("PriorityMailAlertLog", back_populates="user", cascade="all, delete-orphan")

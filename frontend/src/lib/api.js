@@ -124,3 +124,10 @@ export const emailReplyApi = {
   list: () => apiRequest("/email-replies"),
   get: (id) => apiRequest(`/email-replies/${id}`),
 };
+
+export const priorityContactsApi = {
+  list: () => apiRequest("/priority-contacts"),
+  create: (payload) => apiRequest("/priority-contacts", { method: "POST", body: JSON.stringify(payload) }),
+  update: (id, payload) => apiRequest(`/priority-contacts/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  delete: (id) => apiRequest(`/priority-contacts/${id}`, { method: "DELETE" }),
+};

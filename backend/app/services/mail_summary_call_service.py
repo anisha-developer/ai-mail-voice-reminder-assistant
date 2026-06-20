@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.email_message import EmailMessage
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.priority_contact import PriorityContact
 from app.models.user import User
 from app.models.user_call_preference import UserCallPreference
 from app.core.timezone import normalize_timezone_name
@@ -218,6 +219,29 @@ def _script_for_summaries(summaries: list[EmailSummary]) -> str:
     return "\n".join(parts).strip()
 
 
+def _script_for_priority_summary(summary: EmailSummary, contact: PriorityContact | None = None) -> str:
+    sender = _spoken_sender_name(summary.sender)
+    subject = _spoken_subject(summary.subject)
+    priority_name = (contact.display_name or "").strip() if contact else ""
+    priority_relationship = (contact.relationship or "").strip() if contact else ""
+    summary_text = (summary.short_summary or summary.detailed_summary or "This email may need review.").strip()
+    parts = [
+        "Hello. You received 1 priority email today.",
+        f"Email 1. From {sender}. Subject: {subject}.",
+        f"Summary: {summary_text}",
+    ]
+    if priority_name:
+        relation_text = f" your priority contact {priority_name}"
+        if priority_relationship:
+            relation_text += f" ({priority_relationship})"
+        parts.append(f"This came from{relation_text}.")
+    parts.append(
+        "This is a priority contact alert. Please review this email soon. You can say remind me about this email, "
+        "reply to this email, or no to end the call."
+    )
+    return " ".join(part for part in parts if part).strip()
+
+
 def prepare_mail_summary_call(db: Session, user: User, include_delivered: bool = False) -> dict[str, object]:
     counts = get_mail_call_count_today(db, user)
     if counts["used_calls_today"] >= MAX_MAIL_SUMMARY_CALLS_PER_DAY:
@@ -261,6 +285,39 @@ def prepare_mail_summary_call(db: Session, user: User, include_delivered: bool =
         "pending_today_summaries_count": len(pending_summaries),
         "used_calls_today": updated_counts["used_calls_today"],
         "remaining_calls_today": updated_counts["remaining_calls_today"],
+    }
+
+
+def prepare_priority_mail_summary_call(db: Session, user: User, summary: EmailSummary, contact: PriorityContact | None = None) -> dict[str, object]:
+    local_now = _user_local_now(user)
+    call_log = MailSummaryCallLog(
+        user_id=user.id,
+        call_type="mail_summary",
+        call_status="prepared",
+        call_date=local_now.date(),
+        call_time=local_now.time().replace(second=0, microsecond=0),
+        summary_count=1,
+        script_text=_script_for_priority_summary(summary, contact=contact),
+        delivery_status="pending",
+        delivered_summary_ids=_summary_ids_payload([summary.id]),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(call_log)
+    db.flush()
+
+    summary.mail_call_log_id = call_log.id
+    summary.updated_at = datetime.now(timezone.utc)
+    db.add(summary)
+    db.commit()
+    db.refresh(call_log)
+    return {
+        "call_log_id": call_log.id,
+        "summary_count": call_log.summary_count,
+        "script_text": call_log.script_text or "",
+        "today_summaries_count": 1,
+        "pending_today_summaries_count": 1,
+        "used_calls_today": get_mail_call_count_today(db, user)["used_calls_today"],
+        "remaining_calls_today": get_mail_call_count_today(db, user)["remaining_calls_today"],
     }
 
 

@@ -18,6 +18,8 @@ from app.models import (  # noqa: E402,F401
     email_summary,
     gmail_connection,
     mail_summary_call_log,
+    priority_contact,
+    priority_mail_alert_log,
     recurring_reminder_rule,
     reminder,
     reminder_call_log,

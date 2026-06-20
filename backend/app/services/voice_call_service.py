@@ -264,7 +264,7 @@ def _get_mail_call_by_provider_call_id(db: Session, provider_call_id: str) -> Ma
     return call_log
 
 
-def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> dict[str, str]:
+def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int, call_purpose: str = "daily_mail_summary") -> dict[str, str]:
     to_phone = _validate_mail_summary_phone(db, user)
     call_log = get_mail_call_for_user(db, user, call_log_id)
 
@@ -278,7 +278,12 @@ def start_mail_summary_voice_call(db: Session, user: User, call_log_id: int) -> 
     provider = (settings.mail_call_provider or VOICE_PROVIDER_TWILIO).strip().lower()
     if provider == "make_elevenlabs":
         try:
-            make_result = send_mail_summary_call_to_make(db, user, call_log)
+            try:
+                make_result = send_mail_summary_call_to_make(db, user, call_log, call_purpose=call_purpose)
+            except TypeError as exc:
+                if "unexpected keyword argument 'call_purpose'" not in str(exc):
+                    raise
+                make_result = send_mail_summary_call_to_make(db, user, call_log)
         except Exception as exc:
             logger.exception(
                 "Make ElevenLabs provider crashed for mail summary call_log_id=%s error=%s: %s",

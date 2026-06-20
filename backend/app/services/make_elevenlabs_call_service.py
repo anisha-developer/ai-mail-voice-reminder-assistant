@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
+from app.models.priority_contact import PriorityContact
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ class CleanMailSummaryItem:
     detailed_summary: str
     priority: str
     action_required: bool
+    priority_contact_name: str | None = None
+    priority_contact_relationship: str | None = None
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -79,7 +82,7 @@ def _subject(subject: str | None) -> str:
     return _sanitize_text(text, max_chars=180) or "No subject"
 
 
-def _summary_text(summary: EmailSummary | None) -> CleanMailSummaryItem:
+def _summary_text(summary: EmailSummary | None, priority_contact: PriorityContact | None = None) -> CleanMailSummaryItem:
     subject = _subject(summary.subject if summary else None)
     short_summary = _sanitize_text(summary.short_summary if summary else None, max_chars=240)
     detailed_summary = _sanitize_text(summary.detailed_summary if summary else None, max_chars=320)
@@ -97,6 +100,8 @@ def _summary_text(summary: EmailSummary | None) -> CleanMailSummaryItem:
         detailed_summary=detailed_summary,
         priority="high" if action_needed else "normal",
         action_required=action_needed,
+        priority_contact_name=(priority_contact.display_name or "").strip() if priority_contact else None,
+        priority_contact_relationship=(priority_contact.relationship or "").strip() if priority_contact else None,
     )
 
 
@@ -134,17 +139,30 @@ def _resolve_summaries(db: Session, call_log: MailSummaryCallLog, summaries: Ite
     )
 
 
-def _build_payload(user: User, call_log: MailSummaryCallLog, summaries: list[EmailSummary]) -> dict[str, Any]:
+def _build_payload(
+    user: User,
+    call_log: MailSummaryCallLog,
+    summaries: list[EmailSummary],
+    *,
+    call_purpose: str = "daily_mail_summary",
+    priority_contact: PriorityContact | None = None,
+) -> dict[str, Any]:
     clean_items: list[dict[str, Any]] = []
     for index, summary in enumerate(summaries, start=1):
-        item = _summary_text(summary)
+        item = _summary_text(summary, priority_contact=priority_contact)
         item.number = index
-        clean_items.append(asdict(item))
+        item_dict = asdict(item)
+        if priority_contact is not None:
+            if item_dict.get("priority_contact_name") is None:
+                item_dict["priority_contact_name"] = (priority_contact.display_name or "").strip() or None
+            if item_dict.get("priority_contact_relationship") is None:
+                item_dict["priority_contact_relationship"] = (priority_contact.relationship or "").strip() or None
+        clean_items.append(item_dict)
     preferred_language = (user.preferred_language or settings.default_summary_language or "tanglish").strip() or "tanglish"
     return {
         "user_name": (user.name or user.email or "User").strip(),
         "preferred_language": preferred_language,
-        "call_purpose": "daily_mail_summary",
+        "call_purpose": call_purpose,
         "total_emails": len(clean_items),
         "mail_call_id": call_log.id,
         "call_id": call_log.id,
@@ -157,6 +175,9 @@ def send_mail_summary_call_to_make(
     user: User,
     call_log: MailSummaryCallLog,
     summaries: Iterable[EmailSummary] | None = None,
+    *,
+    call_purpose: str = "daily_mail_summary",
+    priority_contact: PriorityContact | None = None,
 ) -> dict[str, Any]:
     if not settings.make_elevenlabs_webhook_url:
         logger.warning(
@@ -173,7 +194,7 @@ def send_mail_summary_call_to_make(
         }
 
     resolved_summaries = _resolve_summaries(db, call_log, summaries)
-    payload = _build_payload(user, call_log, resolved_summaries)
+    payload = _build_payload(user, call_log, resolved_summaries, call_purpose=call_purpose, priority_contact=priority_contact)
     try:
         response = httpx.post(settings.make_elevenlabs_webhook_url, json=payload, timeout=20.0)
         response.raise_for_status()

@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import PageShell from "../components/PageShell";
-import { emailApi } from "../lib/api";
-
-const PRIORITY_CONTACTS_KEY = "priority_contacts";
+import { emailApi, priorityContactsApi } from "../lib/api";
 
 function formatEmailDate(value) {
   return value ? new Date(value).toLocaleString() : "-";
@@ -26,24 +24,6 @@ function getSenderName(sender) {
   if (name) return name;
   const email = getSenderEmail(sender);
   return email ? email.split("@")[0] : sender.trim();
-}
-
-function readPriorityContacts() {
-  try {
-    const raw = localStorage.getItem(PRIORITY_CONTACTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePriorityContacts(contacts) {
-  try {
-    localStorage.setItem(PRIORITY_CONTACTS_KEY, JSON.stringify(contacts));
-  } catch {
-    // ignore storage issues
-  }
 }
 
 function cleanEmailText(value) {
@@ -208,31 +188,29 @@ export default function EmailInboxPage() {
     }
   };
 
-  const addPriorityContact = (email) => {
+  const addPriorityContact = async (email) => {
     const emailAddress = getSenderEmail(email?.sender);
     if (!emailAddress) {
       setPriorityMessage("Could not find a sender email address for this contact.");
       return;
     }
-
-    const contacts = readPriorityContacts();
-    const existingIndex = contacts.findIndex((contact) => contact?.email?.toLowerCase() === emailAddress);
-    const nextContact = {
-      displayName: getSenderName(email?.sender),
-      email: emailAddress,
-      relationship: "Other",
-      addedAt: new Date().toISOString(),
-    };
-
-    if (existingIndex >= 0) {
-      contacts[existingIndex] = { ...contacts[existingIndex], ...nextContact };
-      writePriorityContacts(contacts);
-      setPriorityMessage("Priority contact updated.");
-      return;
+    try {
+      await priorityContactsApi.create({
+        display_name: getSenderName(email?.sender),
+        email_address: emailAddress,
+        relationship: "Other",
+        priority_level: 1,
+        notes: null,
+      });
+      setPriorityMessage("Added to priority contacts.");
+    } catch (err) {
+      const text = String(err?.message || "");
+      if (text.toLowerCase().includes("already exists")) {
+        setPriorityMessage("Priority contact already exists.");
+        return;
+      }
+      setPriorityMessage(text || "Could not save priority contact.");
     }
-
-    writePriorityContacts([...contacts, nextContact]);
-    setPriorityMessage("Added to priority contacts.");
   };
 
   return (
