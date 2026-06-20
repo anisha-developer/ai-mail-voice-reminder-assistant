@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, time, timezone, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -14,6 +15,7 @@ from app.models.email_summary import EmailSummary
 from app.models.email_reply_action import EmailReplyAction
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.recurring_reminder_rule import RecurringReminderRule
+from app.models.reminder import Reminder
 from app.models.user import User
 from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.voice_reminder_session import VoiceReminderSession
@@ -141,6 +143,17 @@ def _cleanup_voice_test_call(call_log_id: int, summary_ids: list[int], message_i
         db.query(EmailMessage).filter(EmailMessage.id.in_(message_ids)).delete(synchronize_session=False)
         if session_ids:
             db.query(RecurringReminderRule).filter(RecurringReminderRule.id.in_(session_ids)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _cleanup_voice_reminders(reminder_ids: list[int]) -> None:
+    if not reminder_ids:
+        return
+    db = SessionLocal()
+    try:
+        db.query(Reminder).filter(Reminder.id.in_(reminder_ids)).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
@@ -637,6 +650,175 @@ def test_voice_mail_call_reply_requires_agent_key(monkeypatch) -> None:
         )
         assert response.status_code == 401, response.text
     finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reminder_requires_confirmation(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        called = {"value": False}
+
+        def _should_not_create_reminder(*args, **kwargs):  # pragma: no cover - safety guard
+            called["value"] = True
+            raise AssertionError("create_reminder should not be called before confirmation")
+
+        monkeypatch.setattr(voice_call_service, "create_reminder", _should_not_create_reminder)
+
+        future_time = (datetime.now(timezone.utc) + timedelta(minutes=20)).astimezone(ZoneInfo("Asia/Kolkata"))
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reminder",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={
+                "mail_call_id": call_log_id,
+                "email_number": 1,
+                "reminder_text": "follow up tomorrow",
+                "reminder_time_text": future_time.strftime("%Y-%m-%d %H:%M"),
+                "confirmed": False,
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "confirmation_required"
+        assert "confirm" in payload["message"].lower()
+        assert called["value"] is False
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reminder_sends_when_confirmed_and_uses_exact_email_number_order(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    reminder_id = None
+    db = SessionLocal()
+    try:
+        call_log = db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).first()
+        assert call_log is not None
+        custom_order = [summary_ids[2], summary_ids[0], summary_ids[1]]
+        call_log.delivered_summary_ids = json.dumps(custom_order)
+        db.add(call_log)
+        db.commit()
+
+        future_time = (datetime.now(timezone.utc) + timedelta(minutes=25)).astimezone(ZoneInfo("Asia/Kolkata"))
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reminder",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={
+                "mail_call_id": call_log_id,
+                "email_number": 2,
+                "reminder_text": "follow up tomorrow morning",
+                "remind_at": future_time.isoformat(),
+                "confirmed": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["status"] == "created"
+        reminder_id = payload["data"]["reminder_id"]
+        assert reminder_id is not None
+
+        reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
+        assert reminder is not None
+        assert reminder.user_id == call_log.user_id
+        assert "Follow up on email from" in reminder.title
+        assert "Phase 9 Test Email 1" in reminder.title
+        assert "User reminder: follow up tomorrow morning" in (reminder.notes or "")
+    finally:
+        db.close()
+        if reminder_id is not None:
+            _cleanup_voice_reminders([reminder_id])
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reminder_invalid_email_number_fails_safely(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        called = {"value": False}
+
+        def _should_not_create_reminder(*args, **kwargs):  # pragma: no cover - safety guard
+            called["value"] = True
+            raise AssertionError("create_reminder should not be called for an invalid email number")
+
+        monkeypatch.setattr(voice_call_service, "create_reminder", _should_not_create_reminder)
+
+        future_time = (datetime.now(timezone.utc) + timedelta(minutes=20)).astimezone(ZoneInfo("Asia/Kolkata"))
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reminder",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={
+                "mail_call_id": call_log_id,
+                "email_number": 99,
+                "reminder_text": "follow up tomorrow",
+                "remind_at": future_time.isoformat(),
+                "confirmed": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "invalid_email_number"
+        assert "could not find" in payload["message"].lower()
+        assert called["value"] is False
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reminder_duplicate_request_does_not_create_duplicate(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    reminder_ids: list[int] = []
+    try:
+        future_time = (datetime.now(timezone.utc) + timedelta(minutes=30)).astimezone(ZoneInfo("Asia/Kolkata"))
+        payload = {
+            "mail_call_id": call_log_id,
+            "email_number": 1,
+            "reminder_text": "follow up tomorrow morning",
+            "remind_at": future_time.isoformat(),
+            "confirmed": True,
+        }
+        first = client.post(
+            f"/voice/mail-calls/{call_log_id}/reminder",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json=payload,
+        )
+        assert first.status_code == 200, first.text
+        first_payload = first.json()
+        assert first_payload["success"] is True
+        reminder_id = first_payload["data"]["reminder_id"]
+        assert reminder_id is not None
+        reminder_ids.append(reminder_id)
+
+        second = client.post(
+            f"/voice/mail-calls/{call_log_id}/reminder",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json=payload,
+        )
+        assert second.status_code == 200, second.text
+        second_payload = second.json()
+        assert second_payload["success"] is True
+        assert second_payload["data"]["reminder_id"] == reminder_id
+
+        db = SessionLocal()
+        try:
+            reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
+            assert reminder is not None
+            duplicates = (
+                db.query(Reminder)
+                .filter(Reminder.user_id == reminder.user_id)
+                .filter(Reminder.title == reminder.title)
+                .filter(Reminder.reminder_at == reminder.reminder_at)
+                .filter(Reminder.phone_number == reminder.phone_number)
+                .filter(Reminder.status != "cancelled")
+                .count()
+            )
+            assert duplicates == 1
+        finally:
+            db.close()
+    finally:
+        _cleanup_voice_reminders(reminder_ids)
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
 

@@ -5,7 +5,9 @@ import logging
 import re
 from datetime import datetime, timezone
 from email.utils import parseaddr
+from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -19,6 +21,7 @@ from app.models.user import User
 from app.models.user_call_preference import UserCallPreference
 from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.voice_reply_session import VoiceReplySession
+from app.services.reminder_service import create_reminder
 from app.services.voice_reminder_service import (
     build_end_call_twiml as build_reminder_end_call_twiml,
     build_reminder_cancellation_twiml,
@@ -79,6 +82,7 @@ MAX_REPEAT_REQUESTS = 1
 MAX_UNKNOWN_REQUESTS = 2
 MAX_SILENCE_REQUESTS = 1
 MAX_VOICE_REPLY_TEXT_LENGTH = 2000
+MAX_VOICE_REMINDER_TEXT_LENGTH = 2000
 EMAIL_ADDRESS_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 FORWARDED_BLOCK_RE = re.compile(r"(?is)-{3,}\s*forwarded message\s*-{3,}.*?(?=\n\s*\n|\Z)")
@@ -851,6 +855,212 @@ def process_voice_mail_reply_request(
         "message": "Done. I sent the reply.",
         "data": {
             "email_number": email_number,
+        },
+    }
+
+
+def _parse_agent_reminder_datetime(
+    remind_at: datetime | str | None,
+    reminder_time_text: str | None,
+    timezone_name: str | None,
+) -> datetime | None:
+    if isinstance(remind_at, datetime):
+        reminder_dt = remind_at
+    elif isinstance(remind_at, str) and remind_at.strip():
+        try:
+            reminder_dt = datetime.fromisoformat(remind_at.strip())
+        except ValueError:
+            return None
+    else:
+        reminder_dt = None
+
+    if reminder_dt is None and reminder_time_text:
+        return parse_reminder_datetime(reminder_time_text, timezone_name)
+
+    if reminder_dt is None:
+        return None
+
+    if reminder_dt.tzinfo is None:
+        tz_name = timezone_name or "UTC"
+        try:
+            zone = ZoneInfo(tz_name)
+        except Exception:
+            zone = timezone.utc
+        reminder_dt = reminder_dt.replace(tzinfo=zone)
+    return reminder_dt.astimezone(timezone.utc)
+
+
+def _build_mail_call_reminder_payload(
+    db: Session,
+    call_log: MailSummaryCallLog,
+    summary: EmailSummary,
+    reminder_text: str,
+    reminder_dt: datetime,
+) -> SimpleNamespace:
+    sender = _spoken_sender_name(summary.sender)
+    subject = _spoken_subject(summary.subject)
+    safe_request = _sanitize_voice_text(reminder_text, max_chars=200) or "follow up"
+    title = f"Follow up on email from {sender} about {subject}"
+    notes = (
+        f"Mail call follow-up reminder. Email from {sender} about {subject}. "
+        f"User reminder: {safe_request}"
+    )
+    local_zone = call_log.user.timezone or "UTC"
+    try:
+        zone = ZoneInfo(local_zone)
+    except Exception:
+        zone = timezone.utc
+    local_dt = reminder_dt.astimezone(timezone.utc).astimezone(zone)
+    return SimpleNamespace(
+        title=title,
+        notes=notes,
+        reminder_date=local_dt.strftime("%Y-%m-%d"),
+        reminder_time=local_dt.strftime("%H:%M"),
+        timezone=local_zone,
+        phone_number=_validate_mail_summary_phone(db, call_log.user),
+        source_type="agent",
+    )
+
+
+def process_voice_mail_reminder_request(
+    db: Session,
+    mail_call_id: int,
+    email_number: int | None,
+    reminder_text: str | None,
+    remind_at: datetime | str | None,
+    reminder_time_text: str | None,
+    confirmed: bool | None,
+    call_id: int | str | None = None,
+) -> dict[str, Any]:
+    del call_id
+    call_log = (
+        db.query(MailSummaryCallLog)
+        .filter(MailSummaryCallLog.id == mail_call_id, MailSummaryCallLog.call_type == "mail_summary")
+        .first()
+    )
+    if call_log is None:
+        return {
+            "success": False,
+            "status": "invalid_call",
+            "message": "I could not find that mail summary call.",
+            "data": {},
+        }
+
+    if email_number is None or email_number < 1:
+        return {
+            "success": False,
+            "status": "invalid_email_number",
+            "message": "I could not find that email summary. Please ask for today's summaries again and choose one from the list.",
+            "data": {},
+        }
+
+    reminder_body = (reminder_text or "").strip()
+    if not reminder_body:
+        return {
+            "success": False,
+            "status": "invalid_reminder_text",
+            "message": "Please tell me what the reminder should say.",
+            "data": {},
+        }
+    if len(reminder_body) > MAX_VOICE_REMINDER_TEXT_LENGTH:
+        return {
+            "success": False,
+            "status": "invalid_reminder_text",
+            "message": "Please keep the reminder shorter so I can save it safely.",
+            "data": {},
+        }
+
+    try:
+        summary = _summary_for_reference(db, call_log, email_number)
+    except HTTPException:
+        return {
+            "success": False,
+            "status": "invalid_email_number",
+            "message": "I could not find that email summary. Please ask for today's summaries again and choose one from the list.",
+            "data": {},
+        }
+
+    reminder_dt = _parse_agent_reminder_datetime(remind_at, reminder_time_text, call_log.user.timezone)
+    if reminder_dt is None:
+        return {
+            "success": False,
+            "status": "invalid_reminder_time",
+            "message": "Please tell me a future reminder time I can understand.",
+            "data": {
+                "email_number": email_number,
+                "subject": _spoken_subject(summary.subject),
+            },
+        }
+    if reminder_dt <= datetime.now(timezone.utc):
+        return {
+            "success": False,
+            "status": "invalid_reminder_time",
+            "message": "That reminder time has already passed. Please tell me a future time.",
+            "data": {
+                "email_number": email_number,
+                "subject": _spoken_subject(summary.subject),
+            },
+        }
+
+    if not confirmed:
+        return {
+            "success": False,
+            "status": "confirmation_required",
+            "message": "Please confirm before I save this reminder.",
+            "data": {
+                "email_number": email_number,
+                "subject": _spoken_subject(summary.subject),
+                "sender": _spoken_sender_name(summary.sender),
+                "reminder_time_text": reminder_time_text,
+            },
+        }
+
+    try:
+        payload = _build_mail_call_reminder_payload(db, call_log, summary, reminder_body, reminder_dt)
+        created = create_reminder(db, call_log.user, payload)
+    except HTTPException as exc:
+        logger.warning(
+            "Voice mail reminder failed call_log_id=%s email_number=%s error=%s",
+            mail_call_id,
+            email_number,
+            exc.detail,
+        )
+        return {
+            "success": False,
+            "status": "failed",
+            "message": str(exc.detail),
+            "data": {},
+        }
+    except Exception as exc:
+        logger.exception(
+            "Voice mail reminder failed call_log_id=%s email_number=%s error=%s: %s",
+            mail_call_id,
+            email_number,
+            type(exc).__name__,
+            exc,
+        )
+        return {
+            "success": False,
+            "status": "failed",
+            "message": "I could not save that reminder right now. Please try again later.",
+            "data": {},
+        }
+
+    logger.info(
+        "Voice mail reminder saved call_log_id=%s email_number=%s reminder_id=%s subject=%r",
+        mail_call_id,
+        email_number,
+        created.get("id"),
+        summary.subject,
+    )
+    return {
+        "success": True,
+        "status": "created",
+        "message": "Done. I saved the reminder.",
+        "data": {
+            "reminder_id": created.get("id"),
+            "email_number": email_number,
+            "subject": _spoken_subject(summary.subject),
         },
     }
 

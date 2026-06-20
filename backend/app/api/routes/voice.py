@@ -14,6 +14,8 @@ from app.schemas.mail_call import (
     VoiceCallStartResponse,
     VoiceMailCallReplyRequest,
     VoiceMailCallReplyResponse,
+    VoiceMailCallReminderRequest,
+    VoiceMailCallReminderResponse,
 )
 from app.services.voice_call_service import (
     build_error_twiml,
@@ -21,6 +23,7 @@ from app.services.voice_call_service import (
     mail_call_twiml,
     process_twilio_status_callback,
     process_twilio_speech_webhook,
+    process_voice_mail_reminder_request,
     process_voice_mail_reply_request,
     start_mail_summary_voice_call,
     voice_interaction_to_item,
@@ -125,6 +128,32 @@ def post_mail_call_reply(
         call_id=payload.call_id,
     )
     return VoiceMailCallReplyResponse(**result)
+
+
+@router.post("/mail-calls/{mail_call_id}/reminder", response_model=VoiceMailCallReminderResponse)
+def post_mail_call_reminder(
+    mail_call_id: int,
+    payload: VoiceMailCallReminderRequest,
+    x_agent_api_key: str | None = Header(default=None, alias="X-Agent-API-Key"),
+    db: Session = Depends(get_db),
+) -> VoiceMailCallReminderResponse:
+    _verify_agent_key(x_agent_api_key)
+    if payload.mail_call_id is not None and payload.mail_call_id != mail_call_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mail_call_id does not match the route")
+    confirmed = payload.confirmed is True
+    if not confirmed and isinstance(payload.confirmed, str):
+        confirmed = payload.confirmed.strip().lower() in {"true", "1", "yes", "y", "on"}
+    result = process_voice_mail_reminder_request(
+        db=db,
+        mail_call_id=mail_call_id,
+        email_number=payload.email_number if isinstance(payload.email_number, int) else None,
+        reminder_text=payload.reminder_text,
+        remind_at=payload.remind_at,
+        reminder_time_text=payload.reminder_time_text,
+        confirmed=confirmed,
+        call_id=payload.call_id,
+    )
+    return VoiceMailCallReminderResponse(**result)
 
 
 def _reminder_twiml_response(reminder_id: int, db: Session) -> Response:

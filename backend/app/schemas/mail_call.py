@@ -137,3 +137,67 @@ class VoiceMailCallReplyResponse(BaseModel):
     status: str
     message: str
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceMailCallReminderRequest(BaseModel):
+    mail_call_id: int | str | None = None
+    email_number: int | str | None = None
+    reminder_text: str | None = None
+    remind_at: datetime | str | None = None
+    reminder_time_text: str | None = None
+    confirmed: bool | str | None = False
+    call_id: int | str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_payload(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+
+        def _empty_to_none(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, str) and not value.strip():
+                return None
+            return value
+
+        def _to_int(value: Any) -> Any:
+            value = _empty_to_none(value)
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+                return int(value.strip())
+            return value
+
+        for key in ("mail_call_id", "email_number", "call_id"):
+            if key in values:
+                values[key] = _to_int(values[key])
+
+        for key in ("reminder_text", "reminder_time_text"):
+            if key in values:
+                values[key] = _empty_to_none(values[key])
+
+        remind_at = values.get("remind_at")
+        if isinstance(remind_at, str):
+            values["remind_at"] = remind_at.strip() or None
+
+        confirmed = values.get("confirmed")
+        if isinstance(confirmed, str):
+            normalized = confirmed.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                values["confirmed"] = True
+            elif normalized in {"false", "0", "no", "n", "off"}:
+                values["confirmed"] = False
+            elif not normalized:
+                values["confirmed"] = None
+
+        return values
+
+
+class VoiceMailCallReminderResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)
