@@ -7,6 +7,7 @@ import SignupPage from "./pages/SignupPage";
 import DashboardPage from "./pages/DashboardPage";
 import SettingsPage from "./pages/SettingsPage";
 import EmailInboxPage from "./pages/EmailInboxPage";
+import PriorityContactsPage from "./pages/PriorityContactsPage";
 import EmailSummariesPage from "./pages/EmailSummariesPage";
 import MailSummaryCallsPage from "./pages/MailSummaryCallsPage";
 import RemindersPage from "./pages/RemindersPage";
@@ -19,9 +20,10 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route element={<ProtectedRoute />}>
-          <Route path="/" element={<Layout />}>
+            <Route path="/" element={<Layout />}>
             <Route index element={<DashboardPage />} />
             <Route path="inbox" element={<EmailInboxPage />} />
+            <Route path="priority-contacts" element={<PriorityContactsPage />} />
             <Route path="summaries" element={<EmailSummariesPage />} />
             <Route path="mail-calls" element={<MailSummaryCallsPage />} />
             <Route path="reminders" element={<RemindersPage />} />

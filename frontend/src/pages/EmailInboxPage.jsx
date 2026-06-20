@@ -3,8 +3,47 @@ import { createPortal } from "react-dom";
 import PageShell from "../components/PageShell";
 import { emailApi } from "../lib/api";
 
+const PRIORITY_CONTACTS_KEY = "priority_contacts";
+
 function formatEmailDate(value) {
   return value ? new Date(value).toLocaleString() : "-";
+}
+
+function normalizeEmailAddress(value) {
+  if (!value || typeof value !== "string") return "";
+  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return (match ? match[0] : value).trim().toLowerCase();
+}
+
+function getSenderEmail(sender) {
+  return normalizeEmailAddress(sender);
+}
+
+function getSenderName(sender) {
+  if (!sender || typeof sender !== "string") return "Unknown sender";
+  const match = sender.match(/^(.*?)<[^>]+>/);
+  const name = match?.[1]?.trim();
+  if (name) return name;
+  const email = getSenderEmail(sender);
+  return email ? email.split("@")[0] : sender.trim();
+}
+
+function readPriorityContacts() {
+  try {
+    const raw = localStorage.getItem(PRIORITY_CONTACTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePriorityContacts(contacts) {
+  try {
+    localStorage.setItem(PRIORITY_CONTACTS_KEY, JSON.stringify(contacts));
+  } catch {
+    // ignore storage issues
+  }
 }
 
 function cleanEmailText(value) {
@@ -124,6 +163,7 @@ function EmailDetailModal({ email, onClose }) {
 export default function EmailInboxPage() {
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
+  const [priorityMessage, setPriorityMessage] = useState("");
   const [syncStatus, setSyncStatus] = useState({
     gmail_connected: false,
     total_emails_stored: 0,
@@ -168,8 +208,40 @@ export default function EmailInboxPage() {
     }
   };
 
+  const addPriorityContact = (email) => {
+    const emailAddress = getSenderEmail(email?.sender);
+    if (!emailAddress) {
+      setPriorityMessage("Could not find a sender email address for this contact.");
+      return;
+    }
+
+    const contacts = readPriorityContacts();
+    const existingIndex = contacts.findIndex((contact) => contact?.email?.toLowerCase() === emailAddress);
+    const nextContact = {
+      displayName: getSenderName(email?.sender),
+      email: emailAddress,
+      relationship: "Other",
+      addedAt: new Date().toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+      contacts[existingIndex] = { ...contacts[existingIndex], ...nextContact };
+      writePriorityContacts(contacts);
+      setPriorityMessage("Priority contact updated.");
+      return;
+    }
+
+    writePriorityContacts([...contacts, nextContact]);
+    setPriorityMessage("Added to priority contacts.");
+  };
+
   return (
     <PageShell title="Email Inbox" description="Sync and browse stored Gmail inbox messages.">
+      {priorityMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {priorityMessage}
+        </div>
+      ) : null}
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm text-slate-400">Gmail connection</p>
@@ -221,6 +293,13 @@ export default function EmailInboxPage() {
                     className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     View Details
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addPriorityContact(email)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    + Priority
                   </button>
                 </div>
               </div>

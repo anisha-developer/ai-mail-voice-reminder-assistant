@@ -6,6 +6,7 @@ import { APP_NAME } from "../constants/app";
 const navItems = [
   { to: "/", label: "Dashboard" },
   { to: "/inbox", label: "Email Inbox" },
+  { to: "/priority-contacts", label: "Priority Contacts" },
   { to: "/summaries", label: "Email Summaries" },
   { to: "/mail-calls", label: "Mail Summary Calls" },
   { to: "/reminders", label: "Reminders" },
