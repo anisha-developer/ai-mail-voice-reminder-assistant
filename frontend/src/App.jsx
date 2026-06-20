@@ -10,6 +10,7 @@ import EmailInboxPage from "./pages/EmailInboxPage";
 import PriorityContactsPage from "./pages/PriorityContactsPage";
 import EmailSummariesPage from "./pages/EmailSummariesPage";
 import MailSummaryCallsPage from "./pages/MailSummaryCallsPage";
+import ReplyStatusPage from "./pages/ReplyStatusPage";
 import RemindersPage from "./pages/RemindersPage";
 import RecurringRemindersPage from "./pages/RecurringRemindersPage";
 
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="priority-contacts" element={<PriorityContactsPage />} />
             <Route path="summaries" element={<EmailSummariesPage />} />
             <Route path="mail-calls" element={<MailSummaryCallsPage />} />
+            <Route path="reply-status" element={<ReplyStatusPage />} />
             <Route path="reminders" element={<RemindersPage />} />
             <Route path="recurring-reminders" element={<RecurringRemindersPage />} />
             <Route path="settings" element={<SettingsPage />} />

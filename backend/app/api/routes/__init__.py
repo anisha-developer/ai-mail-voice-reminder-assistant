@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes.emails import router as emails_router
 from app.api.routes.email_replies import router as email_replies_router
+from app.api.routes.reply_status import router as reply_status_router
 from app.api.routes.summaries import router as summaries_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.agent_tools import router as agent_tools_router
@@ -23,6 +24,7 @@ api_router.include_router(call_preferences_router)
 api_router.include_router(priority_contacts_router)
 api_router.include_router(emails_router)
 api_router.include_router(email_replies_router)
+api_router.include_router(reply_status_router)
 api_router.include_router(summaries_router)
 api_router.include_router(mail_calls_router)
 api_router.include_router(reminders_router)

@@ -125,6 +125,17 @@ export const emailReplyApi = {
   get: (id) => apiRequest(`/email-replies/${id}`),
 };
 
+export const replyStatusApi = {
+  list: (params = {}) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set("status", params.status);
+    if (params.source) search.set("source", params.source);
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return apiRequest(`/reply-status${suffix}`);
+  },
+  get: (id) => apiRequest(`/reply-status/${id}`),
+};
+
 export const priorityContactsApi = {
   list: () => apiRequest("/priority-contacts"),
   create: (payload) => apiRequest("/priority-contacts", { method: "POST", body: JSON.stringify(payload) }),

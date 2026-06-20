@@ -22,6 +22,7 @@ from app.models.user_call_preference import UserCallPreference
 from app.models.voice_call_interaction import VoiceCallInteraction
 from app.models.voice_reply_session import VoiceReplySession
 from app.services.reminder_service import create_reminder
+from app.services.reply_status_service import create_reply_status_log, mark_reply_status_failed, mark_reply_status_sent
 from app.services.voice_reminder_service import (
     build_end_call_twiml as build_reminder_end_call_twiml,
     build_reminder_cancellation_twiml,
@@ -740,7 +741,6 @@ def process_voice_mail_reply_request(
     confirmed: bool | None,
     call_id: int | str | None = None,
 ) -> dict[str, Any]:
-    del call_id
     call_log = (
         db.query(MailSummaryCallLog)
         .filter(MailSummaryCallLog.id == call_log_id, MailSummaryCallLog.call_type == "mail_summary")
@@ -788,14 +788,37 @@ def process_voice_mail_reply_request(
             "data": {},
         }
 
+    reply_log = create_reply_status_log(
+        db=db,
+        user=call_log.user,
+        call_log=call_log,
+        summary=summary,
+        email_number=email_number,
+        reply_text=reply_body,
+        call_id=call_id,
+        source="voice_call",
+    )
+
     if not confirmed:
         return {
             "success": False,
             "status": "confirmation_required",
             "message": "Please confirm before I send this reply.",
             "data": {
+                "reply_log_id": reply_log.id,
                 "email_number": email_number,
                 "subject": _spoken_subject(summary.subject),
+            },
+        }
+
+    if reply_log.status == "sent":
+        return {
+            "success": True,
+            "status": "sent",
+            "message": "This reply was already sent.",
+            "data": {
+                "reply_log_id": reply_log.id,
+                "email_number": email_number,
             },
         }
 
@@ -807,12 +830,14 @@ def process_voice_mail_reply_request(
             summary.sender,
             summary.subject,
         )
+        mark_reply_status_failed(db, reply_log, "Blocked sender")
         return {
             "success": False,
             "status": "blocked_sender",
             "message": "I could not find a valid recipient for this reply because this sender looks automated. Please choose a different email.",
             "data": {
                 "email_number": email_number,
+                "reply_log_id": reply_log.id,
             },
         }
 
@@ -825,8 +850,9 @@ def process_voice_mail_reply_request(
             reply_body=reply_body,
             target_email_reference=email_number,
         )
-        send_reply(db, call_log.user, session)
+        send_result = send_reply(db, call_log.user, session)
     except HTTPException as exc:
+        mark_reply_status_failed(db, reply_log, str(exc.detail))
         logger.warning(
             "Voice mail reply failed call_log_id=%s email_number=%s error=%s",
             call_log_id,
@@ -837,9 +863,12 @@ def process_voice_mail_reply_request(
             "success": False,
             "status": "failed",
             "message": str(exc.detail),
-            "data": {},
+            "data": {
+                "reply_log_id": reply_log.id,
+            },
         }
     except Exception as exc:
+        mark_reply_status_failed(db, reply_log, f"{type(exc).__name__}: {exc}")
         logger.exception(
             "Voice mail reply failed call_log_id=%s email_number=%s error=%s: %s",
             call_log_id,
@@ -851,8 +880,11 @@ def process_voice_mail_reply_request(
             "success": False,
             "status": "failed",
             "message": "I could not send that reply right now. Please try again later.",
-            "data": {},
+            "data": {
+                "reply_log_id": reply_log.id,
+            },
         }
+    mark_reply_status_sent(db, reply_log)
 
     return {
         "success": True,
@@ -860,6 +892,8 @@ def process_voice_mail_reply_request(
         "message": "Done. I sent the reply.",
         "data": {
             "email_number": email_number,
+            "reply_log_id": reply_log.id,
+            "provider_message_id": send_result.get("provider_message_id"),
         },
     }
 

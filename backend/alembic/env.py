@@ -27,6 +27,7 @@ from app.models import (  # noqa: E402,F401
     user_call_preference,
     user_preference,
     voice_call_interaction,
+    voice_email_reply_log,
     voice_reminder_session,
     voice_reply_session,
 )

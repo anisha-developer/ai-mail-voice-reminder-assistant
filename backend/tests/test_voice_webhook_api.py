@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timezone, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -18,6 +19,7 @@ from app.models.recurring_reminder_rule import RecurringReminderRule
 from app.models.reminder import Reminder
 from app.models.user import User
 from app.models.voice_call_interaction import VoiceCallInteraction
+from app.models.voice_email_reply_log import VoiceEmailReplyLog
 from app.models.voice_reminder_session import VoiceReminderSession
 from app.models.voice_reply_session import VoiceReplySession
 from app.services import voice_call_service
@@ -135,17 +137,31 @@ def _cleanup_voice_test_call(call_log_id: int, summary_ids: list[int], message_i
             .all()
         ]
         db.query(VoiceCallInteraction).filter(VoiceCallInteraction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
+        db.query(VoiceEmailReplyLog).filter(VoiceEmailReplyLog.mail_call_id == str(call_log_id)).delete(synchronize_session=False)
         db.query(EmailReplyAction).filter(EmailReplyAction.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(VoiceReplySession).filter(VoiceReplySession.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(VoiceReminderSession).filter(VoiceReminderSession.mail_call_log_id == call_log_id).delete(synchronize_session=False)
         db.query(MailSummaryCallLog).filter(MailSummaryCallLog.id == call_log_id).delete(synchronize_session=False)
         db.query(EmailSummary).filter(EmailSummary.id.in_(summary_ids)).delete(synchronize_session=False)
         db.query(EmailMessage).filter(EmailMessage.id.in_(message_ids)).delete(synchronize_session=False)
-        if session_ids:
-            db.query(RecurringReminderRule).filter(RecurringReminderRule.id.in_(session_ids)).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
+    if session_ids:
+        db = SessionLocal()
+        try:
+            db.query(Reminder).filter(Reminder.recurring_rule_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(VoiceReminderSession).filter(VoiceReminderSession.created_recurring_rule_id.in_(session_ids)).update(
+                {VoiceReminderSession.created_recurring_rule_id: None},
+                synchronize_session=False,
+            )
+            db.commit()
+            db.query(RecurringReminderRule).filter(RecurringReminderRule.id.in_(session_ids)).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+    else:
+        return
 
 
 def _cleanup_voice_reminders(reminder_ids: list[int]) -> None:
@@ -487,7 +503,8 @@ def test_voice_mail_call_reply_sends_when_confirmed(monkeypatch) -> None:
     try:
         def _fake_send_reply(db, user, session):
             captured["user_id"] = user.id
-            captured["session"] = session
+            captured["reply_body"] = session.reply_body
+            captured["target_email_reference"] = session.target_email_reference
             return {"provider_message_id": "mock-provider-message-id"}
 
         monkeypatch.setattr(voice_call_service, "send_reply", _fake_send_reply)
@@ -502,10 +519,18 @@ def test_voice_mail_call_reply_sends_when_confirmed(monkeypatch) -> None:
         assert payload["success"] is True
         assert payload["status"] == "sent"
         assert payload["data"]["email_number"] == 1
-        session = captured.get("session")
-        assert session is not None
-        assert session.reply_body == "Thanks, I will review this."
-        assert session.target_email_reference == 1
+        assert captured["reply_body"] == "Thanks, I will review this."
+        assert captured["target_email_reference"] == 1
+        db = SessionLocal()
+        try:
+            log = db.query(VoiceEmailReplyLog).filter(VoiceEmailReplyLog.mail_call_id == str(call_log_id)).first()
+            assert log is not None
+            assert log.status == "sent"
+            assert log.email_number == 1
+            assert log.original_summary_id == summary_ids[0]
+            assert log.original_sender is not None
+        finally:
+            db.close()
     finally:
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
@@ -525,7 +550,9 @@ def test_voice_mail_call_reply_uses_exact_email_number_order(monkeypatch) -> Non
         captured: dict[str, object] = {}
 
         def _fake_send_reply(db, user, session):
-            captured["session"] = session
+            captured["target_email_reference"] = session.target_email_reference
+            captured["email_summary_id"] = session.email_summary_id
+            captured["email_message_id"] = session.email_message_id
             return {"provider_message_id": "mock-provider-message-id"}
 
         monkeypatch.setattr(voice_call_service, "send_reply", _fake_send_reply)
@@ -538,13 +565,146 @@ def test_voice_mail_call_reply_uses_exact_email_number_order(monkeypatch) -> Non
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["success"] is True
-        session = captured.get("session")
-        assert session is not None
-        assert session.target_email_reference == 2
-        assert session.email_summary_id == summary_ids[0]
-        assert session.email_message_id is not None
+        assert captured["target_email_reference"] == 2
+        assert captured["email_summary_id"] == summary_ids[0]
+        assert captured["email_message_id"] is not None
     finally:
         db.close()
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_creates_pending_log_before_confirmation(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": False},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "confirmation_required"
+        reply_log_id = payload["data"]["reply_log_id"]
+        assert reply_log_id is not None
+
+        db = SessionLocal()
+        try:
+            log = db.query(VoiceEmailReplyLog).filter(VoiceEmailReplyLog.id == reply_log_id).first()
+            assert log is not None
+            assert log.status == "pending"
+            assert log.email_number == 1
+            assert log.original_summary_id == summary_ids[0]
+            assert log.original_email_id is not None
+            assert log.mail_call_id == str(call_log_id)
+        finally:
+            db.close()
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_voice_mail_call_reply_failure_marks_log_failed(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    try:
+        def _raise_failure(*args, **kwargs):
+            raise HTTPException(status_code=400, detail="Reply failed")
+
+        monkeypatch.setattr(voice_call_service, "send_reply", _raise_failure)
+
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": True},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["status"] == "failed"
+        assert "reply failed" in payload["message"].lower()
+        reply_log_id = payload["data"]["reply_log_id"]
+        assert reply_log_id is not None
+
+        db = SessionLocal()
+        try:
+            log = db.query(VoiceEmailReplyLog).filter(VoiceEmailReplyLog.id == reply_log_id).first()
+            assert log is not None
+            assert log.status == "failed"
+            assert log.failure_reason == "Reply failed"
+        finally:
+            db.close()
+    finally:
+        _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
+
+
+def test_reply_status_list_returns_only_current_user_logs(monkeypatch) -> None:
+    _set_agent_key(monkeypatch)
+    token = _login_token()
+    call_log_id, summary_ids, message_ids = _create_voice_test_call()
+    db = SessionLocal()
+    other_user = None
+    other_log = None
+    other_log_id = None
+    reply_log_id = None
+    try:
+        response = client.post(
+            f"/voice/mail-calls/{call_log_id}/reply",
+            headers={"X-Agent-API-Key": AGENT_KEY},
+            json={"email_number": 1, "reply_text": "Thanks, I will review this.", "confirmed": False},
+        )
+        assert response.status_code == 200, response.text
+        reply_log_id = response.json()["data"]["reply_log_id"]
+        assert reply_log_id is not None
+
+        other_user = User(
+            email=f"other-{uuid4()}@example.com",
+            name="Other User",
+            hashed_password="hash",
+            phone_number="+919999999999",
+            timezone="Asia/Kolkata",
+            preferred_language="English",
+            created_at=datetime.now(timezone.utc),
+            is_verified=True,
+        )
+        db.add(other_user)
+        db.flush()
+        other_log = VoiceEmailReplyLog(
+            user_id=other_user.id,
+            mail_call_id="9999",
+            call_id="call-9999",
+            email_number=1,
+            original_sender="someone@example.com",
+            original_subject="Other",
+            reply_text="Hello",
+            status="sent",
+            source="voice_call",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(other_log)
+        db.commit()
+        other_log_id = other_log.id
+    finally:
+        db.close()
+
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.get("/reply-status", headers=headers)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["count"] >= 1
+        ids = [item["id"] for item in payload["value"]]
+        assert reply_log_id in ids
+        assert other_log_id not in ids
+    finally:
+        db = SessionLocal()
+        try:
+            if other_log_id is not None:
+                db.query(VoiceEmailReplyLog).filter(VoiceEmailReplyLog.id == other_log_id).delete(synchronize_session=False)
+                db.commit()
+        finally:
+            db.close()
         _cleanup_voice_test_call(call_log_id, summary_ids, message_ids)
 
 

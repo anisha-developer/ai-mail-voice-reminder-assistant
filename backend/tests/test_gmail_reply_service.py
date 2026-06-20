@@ -17,6 +17,7 @@ from app.models.email_summary import EmailSummary
 from app.models.mail_summary_call_log import MailSummaryCallLog
 from app.models.user import User
 from app.models.voice_call_interaction import VoiceCallInteraction
+from app.models.voice_email_reply_log import VoiceEmailReplyLog
 from app.models.voice_reply_session import VoiceReplySession
 from app.models.voice_reminder_session import VoiceReminderSession
 from app.services import gmail_reply_service
@@ -167,6 +168,7 @@ def reply_test_data():
         db.execute(text("DELETE FROM voice_call_interactions"))
         db.execute(text("DELETE FROM email_reply_actions"))
         db.execute(text("DELETE FROM voice_reply_sessions"))
+        db.execute(text("DELETE FROM voice_email_reply_logs"))
         db.execute(text("DELETE FROM mail_summary_call_logs WHERE call_type = 'mail_summary' AND script_text = 'Test script'"))
         db.execute(text("DELETE FROM email_summaries WHERE short_summary = 'Short summary'"))
         db.execute(text("DELETE FROM email_messages WHERE gmail_message_id LIKE 'reply-test-%'"))
@@ -260,6 +262,7 @@ def test_reply_send_blocks_other_user(monkeypatch: pytest.MonkeyPatch, reply_tes
         db.execute(text("DELETE FROM voice_call_interactions"))
         db.execute(text("DELETE FROM email_reply_actions"))
         db.execute(text("DELETE FROM voice_reply_sessions"))
+        db.execute(text("DELETE FROM voice_email_reply_logs"))
         db.execute(text("DELETE FROM mail_summary_call_logs WHERE call_type = 'mail_summary' AND script_text = 'Test script'"))
         db.execute(text("DELETE FROM email_summaries WHERE short_summary = 'Short summary'"))
         db.execute(text("DELETE FROM email_messages WHERE gmail_message_id LIKE 'reply-test-%'"))

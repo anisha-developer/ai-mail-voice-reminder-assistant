@@ -9,6 +9,7 @@ const navItems = [
   { to: "/priority-contacts", label: "Priority Contacts" },
   { to: "/summaries", label: "Email Summaries" },
   { to: "/mail-calls", label: "Mail Summary Calls" },
+  { to: "/reply-status", label: "Reply Status" },
   { to: "/reminders", label: "Reminders" },
   { to: "/settings", label: "Settings" },
 ];
